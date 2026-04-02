@@ -1,0 +1,12 @@
+{
+  "api_key": "YOUR_API_KEY_HERE",
+  "base_url": "https://api.binance.com",
+  "private_key_path": null,
+  "private_key_password": null,
+  "secret_key": null,
+  "recv_window": 5000,
+  "timeout": 10,
+  "influx_host": "http://192.168.1.4:8181",
+  "influx_database": "fianndata",
+  "influx_measurement": "binance_ticker"
+}
