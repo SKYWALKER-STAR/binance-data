@@ -70,6 +70,48 @@ def _cmd_trades(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     _json_print(tk.market.recent_trades(args.symbol, limit=args.limit))
 
 
+def _cmd_mark_price(tk: BinanceToolkit, args: argparse.Namespace) -> None:
+    _json_print(
+        tk.coin_futures.premium_index(
+            symbol=args.symbol or None,
+            pair=args.pair or None,
+        )
+    )
+
+
+def _cmd_basis(tk: BinanceToolkit, args: argparse.Namespace) -> None:
+    _json_print(
+        tk.coin_futures.basis(
+            pair=args.pair,
+            contract_type=args.contract_type,
+            period=args.period,
+            limit=args.limit,
+            start_time=args.start_time,
+            end_time=args.end_time,
+        )
+    )
+
+
+def _cmd_collect_mark(tk: BinanceToolkit, args: argparse.Namespace) -> None:
+    """启动币本位合约标记价格/指数价格采集常驻进程."""
+    from .collector.mark_price_collector import MarkPriceCollector
+
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    symbols = [s.strip().upper() for s in args.symbols.split(",")]
+    collector = MarkPriceCollector(
+        tk._client.config,
+        symbols=symbols,
+        interval=args.interval,
+    )
+    collector.run()
+
+
 def _cmd_collect(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     """启动价格采集常驻进程."""
     from .collector.price_collector import PriceCollector
@@ -146,6 +188,46 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--symbol", required=True, help="交易对")
     p.add_argument("--limit", type=int, default=500, help="条数")
 
+    # basis (币本位合约基差数据)
+    p = sub.add_parser("basis", help="查询币本位合约基差历史数据")
+    p.add_argument("--pair", required=True, help="基础交易对, 如 BTCUSD")
+    p.add_argument(
+        "--contract-type", dest="contract_type", required=True,
+        choices=["PERPETUAL", "CURRENT_QUARTER", "NEXT_QUARTER"],
+        help="合约类型",
+    )
+    p.add_argument(
+        "--period", required=True,
+        choices=["5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"],
+        help="统计周期",
+    )
+    p.add_argument("--limit", type=int, default=30, help="返回条数, 默认 30, 最大 500")
+    p.add_argument("--start-time", dest="start_time", type=int, default=None, help="起始时间 (毫秒时间戳)")
+    p.add_argument("--end-time", dest="end_time", type=int, default=None, help="结束时间 (毫秒时间戳)")
+
+    # mark-price (币本位合约标记价格/指数价格)
+    p = sub.add_parser("mark-price", help="查询币本位合约的标记价格和指数价格")
+    p.add_argument("--symbol", default=None, help="合约交易对, 如 BTCUSD_PERP (省略返回全部)")
+    p.add_argument("--pair", default=None, help="基础交易对, 如 BTCUSD (省略返回全部)")
+
+    # collect-mark (币本位合约标记/指数价格常驻采集进程)
+    p = sub.add_parser(
+        "collect-mark",
+        help="启动币本位合约标记价格/指数价格采集常驻进程, 定时写入 InfluxDB",
+    )
+    p.add_argument(
+        "--symbols", default="BTCUSD_PERP",
+        help="合约交易对, 多个用逗号分隔 (默认 BTCUSD_PERP)",
+    )
+    p.add_argument(
+        "--interval", type=int, default=60,
+        help="采集间隔秒数 (默认 60)",
+    )
+    p.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="开启 DEBUG 日志",
+    )
+
     # collect (常驻采集进程)
     p = sub.add_parser("collect", help="启动价格采集常驻进程, 定时写入 InfluxDB")
     p.add_argument(
@@ -174,6 +256,9 @@ _COMMAND_MAP = {
     "ticker24": _cmd_ticker24,
     "avg-price": _cmd_avg_price,
     "trades": _cmd_trades,
+    "basis": _cmd_basis,
+    "mark-price": _cmd_mark_price,
+    "collect-mark": _cmd_collect_mark,
     "collect": _cmd_collect,
 }
 

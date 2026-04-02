@@ -17,11 +17,13 @@ biannce-api/
 │   ├── cli.py                # 命令行接口
 │   └── api/                  # 业务 API 模块
 │       ├── base.py           # API 模块基类
-│       ├── market.py         # 市场数据 (公开, 无需签名)
+│       ├── market.py         # 现货市场数据 (公开, 无需签名)
+│       ├── coin_futures.py   # 币本位合约市场数据 (DAPI, 无需签名)
 │       ├── trade.py          # 现货交易 (需要签名)
 │       └── account.py        # 账户信息 (需要签名)
 │   ├── collector/            # 数据采集器
-│   │   └── price_collector.py  # 价格定时采集常驻进程
+│   │   ├── price_collector.py        # 现货价格定时采集常驻进程
+│   │   └── mark_price_collector.py   # 币本位合约标记/指数价格采集进程
 │   └── storage/              # 存储后端
 │       └── influxdb.py       # InfluxDB 写入器
 ├── tests/
@@ -75,6 +77,18 @@ python -m binance_toolkit depth --symbol BTCUSDT --limit 20
 
 # 24 小时行情
 python -m binance_toolkit ticker24 --symbol BTCUSDT
+
+# 查询币本位合约标记价格和指数价格
+python -m binance_toolkit mark-price --symbol BTCUSD_PERP
+
+# 查询某个基础交易对的全部合约
+python -m binance_toolkit mark-price --pair BTCUSD
+
+# 查询基差历史数据 (永续合约, 1h 周期, 最近 30 条)
+python -m binance_toolkit basis --pair BTCUSD --contract-type PERPETUAL --period 1h
+
+# 查询当季合约基差, 自定义条数
+python -m binance_toolkit basis --pair BTCUSD --contract-type CURRENT_QUARTER --period 4h --limit 100
 
 # 查看帮助
 python -m binance_toolkit --help
@@ -130,6 +144,84 @@ InfluxDB 中写入的数据格式：
 |-------------|-----|-------|-----------|
 | `binance_ticker` | `symbol=BTCUSDT` | `price=67123.45` | UTC 时间 |
 
+### 6. 币本位合约标记价格/指数价格采集
+
+定时采集币本位永续合约的标记价格和指数价格，写入 InfluxDB（使用 DAPI: `dapi.binance.com`，无需 API Key）。
+
+**前置条件：** 同上，需安装 InfluxDB 依赖并配置连接信息。
+
+```bash
+# 默认: 每 60 秒采集 BTCUSD_PERP 的标记价格和指数价格
+python -m binance_toolkit collect-mark
+
+# 自定义: 多个合约, 30 秒间隔, 开启调试日志
+python -m binance_toolkit collect-mark --symbols BTCUSD_PERP,ETHUSD_PERP --interval 30 -v
+
+# Ctrl+C 优雅停止
+```
+
+在代码中使用：
+
+```python
+from binance_toolkit.config import BinanceConfig
+from binance_toolkit.collector.mark_price_collector import MarkPriceCollector
+
+config = BinanceConfig.from_env()
+collector = MarkPriceCollector(
+    config,
+    symbols=["BTCUSD_PERP", "ETHUSD_PERP"],
+    interval=60,
+)
+collector.run()  # 阻塞运行, Ctrl+C 停止
+```
+
+InfluxDB 中写入的数据格式：
+
+| Measurement | Tag | Field | Timestamp |
+|-------------|-----|-------|-----------|
+| `binance_ticker` | `symbol=BTCUSD_PERP` | `mark_price`, `index_price`, `last_funding_rate`, `next_funding_time` | UTC 时间 |
+
+### 7. 币本位合约基差数据查询
+
+查询特定合约基础交易对的基差历史数据，结果可写入 InfluxDB。
+
+```bash
+# 一次性查询 (命令行)
+python -m binance_toolkit basis --pair BTCUSD --contract-type PERPETUAL --period 1h --limit 30
+```
+
+在代码中写入 InfluxDB：
+
+```python
+from datetime import datetime, timezone
+from binance_toolkit.config import BinanceConfig
+from binance_toolkit.toolkit import BinanceToolkit
+from binance_toolkit.storage.influxdb import InfluxDBStorage
+
+config = BinanceConfig.from_env()
+with BinanceToolkit(config) as tk:
+    storage = InfluxDBStorage(config)
+    records = tk.coin_futures.basis("BTCUSD", "PERPETUAL", "1h", limit=30)
+    for r in records:
+        storage.write_basis(
+            pair=r["pair"],
+            contract_type=r["contractType"],
+            futures_price=float(r["futuresPrice"]),
+            index_price=float(r["indexPrice"]),
+            basis=float(r["basis"]),
+            basis_rate=float(r["basisRate"]),
+            annualized_basis_rate=float(r["annualizedBasisRate"]),
+            timestamp=datetime.fromtimestamp(r["timestamp"] / 1000, tz=timezone.utc),
+        )
+    storage.close()
+```
+
+InfluxDB 中写入的数据格式：
+
+| Measurement | Tag | Field | Timestamp |
+|-------------|-----|-------|-----------|
+| `binance_ticker` | `pair=BTCUSD`, `contract_type=PERPETUAL` | `futures_price`, `index_price`, `basis`, `basis_rate`, `annualized_basis_rate` | UTC 时间 |
+
 ### 4. 代码中使用
 
 ```python
@@ -147,11 +239,19 @@ config = BinanceConfig(
 )
 
 with BinanceToolkit(config) as tk:
-    # 市场数据 (无需签名)
+    # 现货市场数据 (无需签名)
     print(tk.market.ping())
     print(tk.market.ticker_price("BTCUSDT"))
     print(tk.market.klines("ETHUSDT", "1h", limit=10))
     print(tk.market.depth("BTCUSDT"))
+
+    # 币本位合约: 标记价格和指数价格 (无需签名, 访问 dapi.binance.com)
+    print(tk.coin_futures.premium_index(symbol="BTCUSD_PERP"))
+    print(tk.coin_futures.premium_index(pair="BTCUSD"))   # 返回该 pair 所有合约
+
+    # 币本位合约: 基差历史数据 (无需签名)
+    print(tk.coin_futures.basis("BTCUSD", "PERPETUAL", "1h", limit=50))
+    print(tk.coin_futures.basis("BTCUSD", "CURRENT_QUARTER", "4h"))
 
     # 交易 (需要签名)
     order = tk.trade.new_order(
