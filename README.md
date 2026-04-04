@@ -21,6 +21,8 @@ biannce-api/
 │       ├── coin_futures.py   # 币本位合约市场数据 (DAPI, 无需签名)
 │       ├── trade.py          # 现货交易 (需要签名)
 │       └── account.py        # 账户信息 (需要签名)
+│   ├── ws/                   # WebSocket 模块
+│   │   └── mark_price_stream.py  # 币本位合约标记价格实时流
 │   ├── collector/            # 数据采集器
 │   │   ├── price_collector.py        # 现货价格定时采集常驻进程
 │   │   └── mark_price_collector.py   # 币本位合约标记/指数价格采集进程
@@ -90,6 +92,9 @@ python -m binance_toolkit basis --pair BTCUSD --contract-type PERPETUAL --period
 # 查询当季合约基差, 自定义条数
 python -m binance_toolkit basis --pair BTCUSD --contract-type CURRENT_QUARTER --period 4h --limit 100
 
+# 查询所有永续合约的资金费率信息
+python -m binance_toolkit funding-info
+
 # 查看帮助
 python -m binance_toolkit --help
 ```
@@ -151,11 +156,11 @@ InfluxDB 中写入的数据格式：
 **前置条件：** 同上，需安装 InfluxDB 依赖并配置连接信息。
 
 ```bash
-# 默认: 每 60 秒采集 BTCUSD_PERP 的标记价格和指数价格
+# 每 60 秒采集所有永续合约的标记价格和指数价格
 python -m binance_toolkit collect-mark
 
-# 自定义: 多个合约, 30 秒间隔, 开启调试日志
-python -m binance_toolkit collect-mark --symbols BTCUSD_PERP,ETHUSD_PERP --interval 30 -v
+# 自定义采集间隔, 开启调试日志
+python -m binance_toolkit collect-mark --interval 30 -v
 
 # Ctrl+C 优雅停止
 ```
@@ -169,8 +174,7 @@ from binance_toolkit.collector.mark_price_collector import MarkPriceCollector
 config = BinanceConfig.from_env()
 collector = MarkPriceCollector(
     config,
-    symbols=["BTCUSD_PERP", "ETHUSD_PERP"],
-    interval=60,
+    interval=60,  # 每次自动采集所有永续合约
 )
 collector.run()  # 阻塞运行, Ctrl+C 停止
 ```
@@ -181,7 +185,72 @@ InfluxDB 中写入的数据格式：
 |-------------|-----|-------|-----------|
 | `binance_ticker` | `symbol=BTCUSD_PERP` | `mark_price`, `index_price`, `last_funding_rate`, `next_funding_time` | UTC 时间 |
 
-### 7. 币本位合约基差数据查询
+### 7. 币本位合约标记价格 WebSocket 流
+
+通过 WebSocket 实时获取币本位永续合约的标记价格和指数价格，支持打印到控制台和/或写入 InfluxDB。
+
+```bash
+# 仅打印到控制台 (调试模式)
+python -m binance_toolkit ws-mark-price
+
+# 写入 InfluxDB + 打印到控制台
+python -m binance_toolkit ws-mark-price --write-db
+
+# 仅写入 InfluxDB (静默模式)
+python -m binance_toolkit ws-mark-price --write-db --quiet
+
+# 自定义: 指定合约, 3秒更新, 批量写入参数
+python -m binance_toolkit ws-mark-price --symbols BTCUSD_PERP,ETHUSD_PERP --speed 3s --write-db --batch-size 50
+
+# Ctrl+C 优雅停止
+```
+
+**参数说明：**
+
+| 参数 | 说明 |
+|------|------|
+| `--symbols` | 指定合约，逗号分隔，省略订阅全部 |
+| `--speed` | 更新速度 `1s` 或 `3s`，默认 `1s` |
+| `--all` | 包含交割合约，默认仅永续合约 |
+| `--write-db` / `-w` | 写入 InfluxDB |
+| `--quiet` / `-q` | 不打印到控制台 |
+| `--batch-size` | 批量写入条数，默认 100 |
+| `--flush-interval` | 最长刷新间隔秒数，默认 1.0 |
+
+在代码中使用：
+
+```python
+from binance_toolkit.config import BinanceConfig
+from binance_toolkit.ws import MarkPriceStream, MarkPriceStreamWriter
+
+config = BinanceConfig.from_env()
+
+# 方式一: 仅打印/自定义处理
+stream = MarkPriceStream(
+    symbols=None,  # 订阅全部
+    update_speed="1s",
+    on_message=lambda data: print(data),
+    perp_only=True,
+)
+stream.run()
+
+# 方式二: 写入 InfluxDB (带批量写入 + 重试机制)
+writer = MarkPriceStreamWriter(
+    config,
+    enable_print=True,   # 同时打印到控制台
+    batch_size=100,      # 每 100 条写入一次
+    flush_interval=1.0,  # 或每 1 秒写入一次
+)
+writer.run()
+```
+
+**写入特性：**
+- 内存队列缓冲，批量写入减少 IO
+- 写入失败自动重试 3 次
+- 优雅停止时确保缓冲数据写入
+- 退出时输出统计信息
+
+### 8. 币本位合约基差数据查询
 
 查询特定合约基础交易对的基差历史数据，结果可写入 InfluxDB。
 
@@ -252,6 +321,9 @@ with BinanceToolkit(config) as tk:
     # 币本位合约: 基差历史数据 (无需签名)
     print(tk.coin_futures.basis("BTCUSD", "PERPETUAL", "1h", limit=50))
     print(tk.coin_futures.basis("BTCUSD", "CURRENT_QUARTER", "4h"))
+
+    # 币本位合约: 资金费率信息 (无需签名)
+    print(tk.coin_futures.funding_info())  # 返回所有永续合约的资金费率设置
 
     # 交易 (需要签名)
     order = tk.trade.new_order(

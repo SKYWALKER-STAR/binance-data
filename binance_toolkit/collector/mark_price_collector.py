@@ -34,18 +34,14 @@ class MarkPriceCollector:
         self,
         config: BinanceConfig,
         *,
-        symbols: list[str] | None = None,
         interval: int = 60,
     ):
         """
         Args:
             config:   Binance 配置 (含 InfluxDB 配置).
-            symbols:  要采集的合约交易对列表, 默认 ["BTCUSD_PERP"]。
-                      传入 None 或空列表时, 每次采集全部永续合约。
             interval: 采集间隔 (秒), 默认 60.
         """
         self._config = config
-        self._symbols = symbols or ["BTCUSD_PERP"]
         self._interval = interval
         self._stop_event = threading.Event()
         self._toolkit: BinanceToolkit | None = None
@@ -60,8 +56,7 @@ class MarkPriceCollector:
         signal.signal(signal.SIGTERM, self._signal_handler)
 
         logger.info(
-            "标记价格采集器启动: symbols=%s, interval=%ds",
-            self._symbols,
+            "标记价格采集器启动: 获取所有永续合约, interval=%ds",
             self._interval,
         )
 
@@ -81,44 +76,42 @@ class MarkPriceCollector:
         self._stop_event.set()
 
     def _collect_once(self) -> None:
-        """执行一次采集: 获取所有指定合约的标记/指数价格并写入 InfluxDB."""
+        """执行一次采集: 获取所有永续合约的标记/指数价格并写入 InfluxDB."""
         assert self._toolkit is not None
         assert self._storage is not None
 
-        for symbol in self._symbols:
-            try:
-                results = self._toolkit.coin_futures.premium_index(symbol=symbol)
-                # 单个 symbol 时 API 返回 list，取第一条
-                if isinstance(results, list):
-                    records = results
-                else:
-                    records = [results]
+        try:
+            # 不传 symbol/pair 参数，一次性获取全部合约数据
+            results = self._toolkit.coin_futures.premium_index()
+            if not isinstance(results, list):
+                results = [results]
 
-                for record in records:
-                    sym = record.get("symbol", symbol)
-                    mark_price = float(record.get("markPrice", 0))
-                    index_price = float(record.get("indexPrice", 0))
+            # 仅保留永续合约 (symbol 以 _PERP 结尾)
+            perp_records = [r for r in results if r.get("symbol", "").endswith("_PERP")]
 
-                    # 资金费率仅永续合约有效 (交割合约返回空字符串)
-                    raw_rate = record.get("lastFundingRate", "")
-                    last_funding_rate = float(raw_rate) if raw_rate else None
+            for record in perp_records:
+                symbol = record.get("symbol", "UNKNOWN")
+                mark_price = float(record.get("markPrice", 0))
+                index_price = float(record.get("indexPrice", 0))
 
-                    raw_nft = record.get("nextFundingTime", 0)
-                    next_funding_time = int(raw_nft) if raw_nft else None
+                # 资金费率仅永续合约有效
+                raw_rate = record.get("lastFundingRate", "")
+                last_funding_rate = float(raw_rate) if raw_rate else None
 
-                    self._storage.write_mark_price(
-                        sym,
-                        mark_price,
-                        index_price,
-                        last_funding_rate=last_funding_rate,
-                        next_funding_time=next_funding_time,
-                    )
-                    logger.info(
-                        "✓ %s mark=%.4f index=%.4f",
-                        sym, mark_price, index_price,
-                    )
-            except Exception:
-                logger.exception("✗ 采集 %s 标记价格失败", symbol)
+                raw_nft = record.get("nextFundingTime", 0)
+                next_funding_time = int(raw_nft) if raw_nft else None
+
+                self._storage.write_mark_price(
+                    symbol,
+                    mark_price,
+                    index_price,
+                    last_funding_rate=last_funding_rate,
+                    next_funding_time=next_funding_time,
+                )
+
+            logger.info("✓ 采集完成, 共 %d 个永续合约", len(perp_records))
+        except Exception:
+            logger.exception("✗ 采集标记价格失败")
 
     def _signal_handler(self, signum: int, frame: Any) -> None:
         sig_name = signal.Signals(signum).name

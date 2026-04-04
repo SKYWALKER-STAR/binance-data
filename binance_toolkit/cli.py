@@ -92,6 +92,34 @@ def _cmd_basis(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     )
 
 
+def _cmd_funding_info(tk: BinanceToolkit, args: argparse.Namespace) -> None:
+    _json_print(tk.coin_futures.funding_info())
+
+
+def _cmd_ws_mark_price(tk: BinanceToolkit, args: argparse.Namespace) -> None:
+    """启动币本位合约标记价格 WebSocket 流."""
+    from .ws.mark_price_stream import run_mark_price_stream
+
+    symbols = None
+    if args.symbols:
+        symbols = [s.strip().upper() for s in args.symbols.split(",")]
+
+    # 判断是否需要写入数据库
+    write_db = args.write_db
+    config = tk._client.config if write_db else None
+
+    run_mark_price_stream(
+        symbols=symbols,
+        update_speed=args.speed,
+        perp_only=not args.all,
+        config=config,
+        write_db=write_db,
+        enable_print=not args.quiet,
+        batch_size=args.batch_size,
+        flush_interval=args.flush_interval,
+    )
+
+
 def _cmd_collect_mark(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     """启动币本位合约标记价格/指数价格采集常驻进程."""
     from .collector.mark_price_collector import MarkPriceCollector
@@ -106,7 +134,7 @@ def _cmd_collect_mark(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     symbols = [s.strip().upper() for s in args.symbols.split(",")]
     collector = MarkPriceCollector(
         tk._client.config,
-        symbols=symbols,
+        #symbols=symbols,
         interval=args.interval,
     )
     collector.run()
@@ -210,6 +238,43 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--symbol", default=None, help="合约交易对, 如 BTCUSD_PERP (省略返回全部)")
     p.add_argument("--pair", default=None, help="基础交易对, 如 BTCUSD (省略返回全部)")
 
+    # funding-info (币本位合约资金费率信息)
+    sub.add_parser("funding-info", help="查询所有永续合约的资金费率信息")
+
+    # ws-mark-price (币本位合约标记价格 WebSocket 流)
+    p = sub.add_parser(
+        "ws-mark-price",
+        help="启动币本位合约标记价格 WebSocket 流",
+    )
+    p.add_argument(
+        "--symbols", default=None,
+        help="合约交易对, 多个用逗号分隔 (省略订阅全部)",
+    )
+    p.add_argument(
+        "--speed", default="1s", choices=["1s", "3s"],
+        help="更新速度: 1s (每秒) 或 3s (每3秒), 默认 1s",
+    )
+    p.add_argument(
+        "--all", action="store_true",
+        help="显示所有合约 (包括交割合约), 默认仅永续合约",
+    )
+    p.add_argument(
+        "--write-db", "-w", action="store_true",
+        help="将数据写入 InfluxDB",
+    )
+    p.add_argument(
+        "--quiet", "-q", action="store_true",
+        help="静默模式, 不打印到控制台 (仅在 --write-db 时有意义)",
+    )
+    p.add_argument(
+        "--batch-size", type=int, default=100,
+        help="批量写入大小, 默认 100 条",
+    )
+    p.add_argument(
+        "--flush-interval", type=float, default=1.0,
+        help="最长刷新间隔 (秒), 默认 1.0",
+    )
+
     # collect-mark (币本位合约标记/指数价格常驻采集进程)
     p = sub.add_parser(
         "collect-mark",
@@ -258,6 +323,8 @@ _COMMAND_MAP = {
     "trades": _cmd_trades,
     "basis": _cmd_basis,
     "mark-price": _cmd_mark_price,
+    "funding-info": _cmd_funding_info,
+    "ws-mark-price": _cmd_ws_mark_price,
     "collect-mark": _cmd_collect_mark,
     "collect": _cmd_collect,
 }

@@ -2,6 +2,7 @@
 
 文档参考:
   - Index Price and Mark Price: https://developers.binance.com/docs/derivatives/coin-margined-futures/market-data/rest-api/Index-Price-and-Mark-Price
+  - Get Funding Info: https://developers.binance.com/docs/derivatives/coin-margined-futures/market-data/rest-api/Get-Funding-Info
   - Basis: https://developers.binance.com/docs/derivatives/coin-margined-futures/market-data/rest-api/Basis
 """
 
@@ -52,6 +53,25 @@ class CoinFuturesMarketAPI(BaseAPI):
         if pair:
             params["pair"] = pair
         return self._client.get("/dapi/v1/premiumIndex", params=params)
+
+    # ---- 资金费率信息 ----
+
+    def funding_info(self) -> list[dict]:
+        """查询所有永续合约的资金费率信息.
+
+        GET /dapi/v1/fundingInfo
+
+        返回曾调整过 FundingRateCap / FundingRateFloor / fundingIntervalHours 的合约信息。
+
+        Returns:
+            list[dict]，每条记录包含:
+              - symbol                    合约交易对名称，如 "BTCUSD_PERP"
+              - adjustedFundingRateCap    调整后的资金费率上限
+              - adjustedFundingRateFloor  调整后的资金费率下限
+              - fundingIntervalHours      资金费率结算间隔 (小时)
+              - disclaimer                (可忽略)
+        """
+        return self._client.get("/dapi/v1/fundingInfo")
 
     # ---- 基差数据 ----
 
