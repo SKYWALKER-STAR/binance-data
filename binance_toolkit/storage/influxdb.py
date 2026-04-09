@@ -152,6 +152,54 @@ class InfluxDBStorage:
             )
             raise
 
+    def write_mark_price_batch(self, points: list[dict[str, Any]]) -> None:
+        """批量写入合约的标记价格数据点.
+
+        Args:
+            points: 数据点列表，每个元素包含:
+                - symbol:            合约交易对
+                - mark_price:        标记价格
+                - index_price:       指数价格
+                - last_funding_rate: 资金费率 (可选)
+                - next_funding_time: 下次资金费时间戳毫秒 (可选)
+                - timestamp:         时间戳 (可选)
+                - contract_type:     合约类型 "COIN" 或 "USDT" (可选，默认 "COIN")
+        """
+        if not points:
+            return
+
+        records = []
+        for p in points:
+            ts = p.get("timestamp") or datetime.now(timezone.utc)
+            fields: dict[str, Any] = {
+                "mark_price": float(p["mark_price"]),
+                "index_price": float(p["index_price"]),
+            }
+            if p.get("last_funding_rate") is not None:
+                fields["last_funding_rate"] = float(p["last_funding_rate"])
+            if p.get("next_funding_time") is not None:
+                fields["next_funding_time"] = int(p["next_funding_time"])
+
+            # 合约类型作为 tag，默认 COIN (币本位)
+            margin_type = p.get("contract_type", "COIN")
+
+            records.append({
+                "measurement": self._futures_measurement,
+                "tags": {
+                    "symbol": p["symbol"],
+                    "margin_type": margin_type,
+                },
+                "fields": fields,
+                "time": ts,
+            })
+
+        try:
+            self._client.write(record=records)
+            logger.debug("批量写入 %d 条标记价格数据成功", len(records))
+        except Exception:
+            logger.exception("批量写入 InfluxDB 失败: %d 条数据", len(records))
+            raise
+
     def write_basis(
         self,
         pair: str,

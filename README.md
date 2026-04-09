@@ -22,7 +22,8 @@ biannce-api/
 │       ├── trade.py          # 现货交易 (需要签名)
 │       └── account.py        # 账户信息 (需要签名)
 │   ├── ws/                   # WebSocket 模块
-│   │   └── mark_price_stream.py  # 币本位合约标记价格实时流
+│   │   ├── coin_mark_price_stream.py  # 币本位合约标记价格实时流
+│   │   └── usdt_mark_price_stream.py  # U本位合约标记价格实时流
 │   ├── collector/            # 数据采集器
 │   │   ├── price_collector.py        # 现货价格定时采集常驻进程
 │   │   └── mark_price_collector.py   # 币本位合约标记/指数价格采集进程
@@ -191,16 +192,19 @@ InfluxDB 中写入的数据格式：
 
 ```bash
 # 仅打印到控制台 (调试模式)
-python -m binance_toolkit ws-mark-price
+python -m binance_toolkit ws-mark-price-coin
 
 # 写入 InfluxDB + 打印到控制台
-python -m binance_toolkit ws-mark-price --write-db
+python -m binance_toolkit ws-mark-price-coin --write-db
 
 # 仅写入 InfluxDB (静默模式)
-python -m binance_toolkit ws-mark-price --write-db --quiet
+python -m binance_toolkit ws-mark-price-coin --write-db --quiet
 
 # 自定义: 指定合约, 3秒更新, 批量写入参数
-python -m binance_toolkit ws-mark-price --symbols BTCUSD_PERP,ETHUSD_PERP --speed 3s --write-db --batch-size 50
+python -m binance_toolkit ws-mark-price-coin --symbols BTCUSD_PERP,ETHUSD_PERP --speed 3s --write-db --batch-size 50
+
+# 采样存储: 每 10 秒存一条 (大幅减少数据量)
+python -m binance_toolkit ws-mark-price-coin --write-db --quiet --sample-interval 10
 
 # Ctrl+C 优雅停止
 ```
@@ -216,6 +220,7 @@ python -m binance_toolkit ws-mark-price --symbols BTCUSD_PERP,ETHUSD_PERP --spee
 | `--quiet` / `-q` | 不打印到控制台 |
 | `--batch-size` | 批量写入条数，默认 100 |
 | `--flush-interval` | 最长刷新间隔秒数，默认 1.0 |
+| `--sample-interval` | 采样间隔秒数，默认 0 不采样 |
 
 在代码中使用：
 
@@ -234,12 +239,13 @@ stream = MarkPriceStream(
 )
 stream.run()
 
-# 方式二: 写入 InfluxDB (带批量写入 + 重试机制)
+# 方式二: 写入 InfluxDB (带批量写入 + 重试机制 + 采样)
 writer = MarkPriceStreamWriter(
     config,
-    enable_print=True,   # 同时打印到控制台
-    batch_size=100,      # 每 100 条写入一次
-    flush_interval=1.0,  # 或每 1 秒写入一次
+    enable_print=True,    # 同时打印到控制台
+    batch_size=100,       # 每 100 条写入一次
+    flush_interval=1.0,   # 或每 1 秒写入一次
+    sample_interval=10,   # 每 10 秒采样一条 (可选)
 )
 writer.run()
 ```
@@ -248,7 +254,106 @@ writer.run()
 - 内存队列缓冲，批量写入减少 IO
 - 写入失败自动重试 3 次
 - 优雅停止时确保缓冲数据写入
+- 支持采样存储，减少数据量
 - 退出时输出统计信息
+
+### 7.1 U 本位合约标记价格 WebSocket 流
+
+通过 WebSocket 实时获取 U 本位永续合约的标记价格和指数价格，支持打印到控制台和/或写入 InfluxDB。用法与币本位合约相同。
+
+```bash
+# 仅打印到控制台 (调试模式)
+python -m binance_toolkit ws-mark-price-usdt
+
+# 写入 InfluxDB + 打印到控制台
+python -m binance_toolkit ws-mark-price-usdt --write-db
+
+# 仅写入 InfluxDB (静默模式)
+python -m binance_toolkit ws-mark-price-usdt --write-db --quiet
+
+# 自定义: 指定合约, 3秒更新, 批量写入参数
+python -m binance_toolkit ws-mark-price-usdt --symbols BTCUSDT,ETHUSDT --speed 3s --write-db --batch-size 50
+
+# Ctrl+C 优雅停止
+```
+
+在代码中使用：
+
+```python
+from binance_toolkit.config import BinanceConfig
+from binance_toolkit.ws import UsdtMarkPriceStream, UsdtMarkPriceStreamWriter
+
+config = BinanceConfig.from_env()
+
+# 方式一: 仅打印/自定义处理
+stream = UsdtMarkPriceStream(
+    symbols=None,  # 订阅全部
+    update_speed="1s",
+    on_message=lambda data: print(data),
+    perp_only=True,  # 仅永续合约 (无下划线的合约)
+)
+stream.run()
+
+# 方式二: 写入 InfluxDB (带批量写入 + 重试机制)
+writer = UsdtMarkPriceStreamWriter(
+    config,
+    enable_print=True,    # 同时打印到控制台
+    batch_size=500,       # 每 500 条写入一次
+    flush_interval=1.0,   # 或每 1 秒写入一次
+    writer_threads=2,     # 2 个写入线程并行
+    sample_interval=10,   # 每 10 秒采样一条 (减少数据量)
+)
+writer.run()
+```
+
+**U 本位参数说明：**
+
+| 参数 | 说明 |
+|------|------|
+| `--symbols` | 指定合约，逗号分隔，省略订阅全部 |
+| `--speed` | 更新速度 `1s` 或 `3s`，默认 `1s` |
+| `--all` | 包含交割合约，默认仅永续合约 |
+| `--write-db` / `-w` | 写入 InfluxDB |
+| `--quiet` / `-q` | 不打印到控制台 |
+| `--batch-size` | 批量写入条数，默认 500 |
+| `--flush-interval` | 最长刷新间隔秒数，默认 1.0 |
+| `--writer-threads` | 写入线程数，默认 2 |
+| `--sample-interval` | 采样间隔秒数，默认 0 不采样 |
+
+**采样存储 (解决数据量过大问题)：**
+
+U 本位合约约 200+ 个，每秒推送一次会产生大量数据（约 1700 万条/天）。使用 `--sample-interval` 可大幅减少数据量：
+
+```bash
+# 每 10 秒采样一次 (数据量减少到 1/10)
+python -m binance_toolkit ws-mark-price-usdt --write-db --quiet --sample-interval 10
+
+# 每 30 秒采样一次 (数据量减少到 1/30)
+python -m binance_toolkit ws-mark-price-usdt --write-db --quiet --sample-interval 30
+
+# 每分钟采样一次 (适合历史趋势分析)
+python -m binance_toolkit ws-mark-price-usdt --write-db --quiet --sample-interval 60
+```
+
+| 采样间隔 | 每天数据量 | 相比原始 |
+|---------|-----------|---------|
+| 无采样 | ~1700万条 | 100% |
+| 10 秒 | ~170万条 | 10% |
+| 30 秒 | ~60万条 | 3.5% |
+| 60 秒 | ~30万条 | 1.7% |
+
+**InfluxDB 中 margin_type 字段区分：**
+
+| 合约类型 | margin_type 值 |
+|----------|----------------|
+| 币本位合约 (COIN-M) | `COIN` |
+| U本位合约 (USDT-M) | `USDT` |
+
+InfluxDB 中写入的数据格式：
+
+| Measurement | Tag | Field | Timestamp |
+|-------------|-----|-------|-----------|
+| `binance_ticker` | `symbol=BTCUSDT`, `margin_type=USDT` | `mark_price`, `index_price`, `last_funding_rate`, `next_funding_time` | UTC 时间 |
 
 ### 8. 币本位合约基差数据查询
 

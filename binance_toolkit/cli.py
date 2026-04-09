@@ -96,9 +96,9 @@ def _cmd_funding_info(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     _json_print(tk.coin_futures.funding_info())
 
 
-def _cmd_ws_mark_price(tk: BinanceToolkit, args: argparse.Namespace) -> None:
+def _cmd_coin_ws_mark_price(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     """启动币本位合约标记价格 WebSocket 流."""
-    from .ws.mark_price_stream import run_mark_price_stream
+    from .ws.coin_mark_price_stream import run_mark_price_stream
 
     symbols = None
     if args.symbols:
@@ -117,6 +117,33 @@ def _cmd_ws_mark_price(tk: BinanceToolkit, args: argparse.Namespace) -> None:
         enable_print=not args.quiet,
         batch_size=args.batch_size,
         flush_interval=args.flush_interval,
+        sample_interval=args.sample_interval,
+    )
+
+
+def _cmd_ws_mark_price_usdt(tk: BinanceToolkit, args: argparse.Namespace) -> None:
+    """启动 U 本位合约标记价格 WebSocket 流."""
+    from .ws.usdt_mark_price_stream import run_usdt_mark_price_stream
+
+    symbols = None
+    if args.symbols:
+        symbols = [s.strip().upper() for s in args.symbols.split(",")]
+
+    # 判断是否需要写入数据库
+    write_db = args.write_db
+    config = tk._client.config if write_db else None
+
+    run_usdt_mark_price_stream(
+        symbols=symbols,
+        update_speed=args.speed,
+        perp_only=not args.all,
+        config=config,
+        write_db=write_db,
+        enable_print=not args.quiet,
+        batch_size=args.batch_size,
+        flush_interval=args.flush_interval,
+        writer_threads=args.writer_threads,
+        sample_interval=args.sample_interval,
     )
 
 
@@ -241,9 +268,9 @@ def build_parser() -> argparse.ArgumentParser:
     # funding-info (币本位合约资金费率信息)
     sub.add_parser("funding-info", help="查询所有永续合约的资金费率信息")
 
-    # ws-mark-price (币本位合约标记价格 WebSocket 流)
+    # ws-mark-price-coin (币本位合约标记价格 WebSocket 流)
     p = sub.add_parser(
-        "ws-mark-price",
+        "ws-mark-price-coin",
         help="启动币本位合约标记价格 WebSocket 流",
     )
     p.add_argument(
@@ -273,6 +300,52 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--flush-interval", type=float, default=1.0,
         help="最长刷新间隔 (秒), 默认 1.0",
+    )
+    p.add_argument(
+        "--sample-interval", type=int, default=0,
+        help="采样间隔 (秒), 默认 0 不采样。设为 10 表示每个合约每 10 秒只存储一条数据，可大幅减少数据量",
+    )
+
+    # ws-mark-price-usdt (U本位合约标记价格 WebSocket 流)
+    p = sub.add_parser(
+        "ws-mark-price-usdt",
+        help="启动 U 本位合约标记价格 WebSocket 流",
+    )
+    p.add_argument(
+        "--symbols", default=None,
+        help="合约交易对, 多个用逗号分隔 (省略订阅全部)",
+    )
+    p.add_argument(
+        "--speed", default="1s", choices=["1s", "3s"],
+        help="更新速度: 1s (每秒) 或 3s (每3秒), 默认 1s",
+    )
+    p.add_argument(
+        "--all", action="store_true",
+        help="显示所有合约 (包括交割合约), 默认仅永续合约",
+    )
+    p.add_argument(
+        "--write-db", "-w", action="store_true",
+        help="将数据写入 InfluxDB",
+    )
+    p.add_argument(
+        "--quiet", "-q", action="store_true",
+        help="静默模式, 不打印到控制台 (仅在 --write-db 时有意义)",
+    )
+    p.add_argument(
+        "--batch-size", type=int, default=500,
+        help="批量写入大小, 默认 500 条 (U本位合约数量多，需要更大批量)",
+    )
+    p.add_argument(
+        "--flush-interval", type=float, default=1.0,
+        help="最长刷新间隔 (秒), 默认 1.0",
+    )
+    p.add_argument(
+        "--writer-threads", type=int, default=2,
+        help="写入线程数, 默认 2 (用于并行写入提高吞吐量)",
+    )
+    p.add_argument(
+        "--sample-interval", type=int, default=0,
+        help="采样间隔 (秒), 默认 0 不采样。设为 10 表示每个合约每 10 秒只存储一条数据，可大幅减少数据量",
     )
 
     # collect-mark (币本位合约标记/指数价格常驻采集进程)
@@ -324,7 +397,8 @@ _COMMAND_MAP = {
     "basis": _cmd_basis,
     "mark-price": _cmd_mark_price,
     "funding-info": _cmd_funding_info,
-    "ws-mark-price": _cmd_ws_mark_price,
+    "ws-mark-price-coin": _cmd_coin_ws_mark_price,
+    "ws-mark-price-usdt": _cmd_ws_mark_price_usdt,
     "collect-mark": _cmd_collect_mark,
     "collect": _cmd_collect,
 }
