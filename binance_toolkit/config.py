@@ -36,6 +36,11 @@ class BinanceConfig:
     influx_measurement: str = "binance_ticker"
     influx_futures_measurement: str = "binance_futures"
 
+    # Kafka (可选, 用于实时数据流)
+    kafka_bootstrap_servers: Optional[str] = None  # 逗号分隔, 如 "localhost:9092"
+    kafka_topic_coin: str = "binance.mark_price.coin"  # 币本位合约标记价格 Topic
+    kafka_topic_usdt: str = "binance.mark_price.usdt"  # U本位合约标记价格 Topic
+
     # ---------- 工厂方法 ----------
 
     @classmethod
@@ -55,6 +60,9 @@ class BinanceConfig:
             INFLUX_DATABASE        (可选, InfluxDB 数据库名)
             INFLUX_MEASUREMENT     (可选, 默认 binance_ticker)
             INFLUX_FUTURES_MEASUREMENT (可选, 默认 binance_futures)
+            KAFKA_BOOTSTRAP_SERVERS (可选, Kafka 地址, 逗号分隔)
+            KAFKA_TOPIC_COIN       (可选, 币本位标记价格 Topic, 默认 binance.mark_price.coin)
+            KAFKA_TOPIC_USDT       (可选, U本位标记价格 Topic, 默认 binance.mark_price.usdt)
         """
         api_key = os.environ.get("BINANCE_API_KEY", "")
         if not api_key:
@@ -72,6 +80,9 @@ class BinanceConfig:
             influx_database=os.environ.get("INFLUX_DATABASE"),
             influx_measurement=os.environ.get("INFLUX_MEASUREMENT", "binance_ticker"),
             influx_futures_measurement=os.environ.get("INFLUX_FUTURES_MEASUREMENT", "binance_futures"),
+            kafka_bootstrap_servers=os.environ.get("KAFKA_BOOTSTRAP_SERVERS"),
+            kafka_topic_coin=os.environ.get("KAFKA_TOPIC_COIN", "binance.mark_price.coin"),
+            kafka_topic_usdt=os.environ.get("KAFKA_TOPIC_USDT", "binance.mark_price.usdt"),
         )
 
     @classmethod
@@ -101,4 +112,7 @@ class BinanceConfig:
             influx_database=data.get("influx_database"),
             influx_measurement=data.get("influx_measurement", "binance_ticker"),
             influx_futures_measurement=data.get("influx_futures_measurement", "binance_futures"),
+            kafka_bootstrap_servers=data.get("kafka_bootstrap_servers"),
+            kafka_topic_coin=data.get("kafka_topic_coin", "binance.mark_price.coin"),
+            kafka_topic_usdt=data.get("kafka_topic_usdt", "binance.mark_price.usdt"),
         )

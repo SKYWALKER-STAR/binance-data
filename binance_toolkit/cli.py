@@ -104,9 +104,10 @@ def _cmd_coin_ws_mark_price(tk: BinanceToolkit, args: argparse.Namespace) -> Non
     if args.symbols:
         symbols = [s.strip().upper() for s in args.symbols.split(",")]
 
-    # 判断是否需要写入数据库
+    # 判断是否需要写入数据库或 Kafka
     write_db = args.write_db
-    config = tk._client.config if write_db else None
+    write_kafka = args.write_kafka
+    config = tk._client.config if (write_db or write_kafka) else None
 
     run_mark_price_stream(
         symbols=symbols,
@@ -114,6 +115,7 @@ def _cmd_coin_ws_mark_price(tk: BinanceToolkit, args: argparse.Namespace) -> Non
         perp_only=not args.all,
         config=config,
         write_db=write_db,
+        write_kafka=write_kafka,
         enable_print=not args.quiet,
         batch_size=args.batch_size,
         flush_interval=args.flush_interval,
@@ -129,9 +131,10 @@ def _cmd_ws_mark_price_usdt(tk: BinanceToolkit, args: argparse.Namespace) -> Non
     if args.symbols:
         symbols = [s.strip().upper() for s in args.symbols.split(",")]
 
-    # 判断是否需要写入数据库
+    # 判断是否需要写入数据库或 Kafka
     write_db = args.write_db
-    config = tk._client.config if write_db else None
+    write_kafka = args.write_kafka
+    config = tk._client.config if (write_db or write_kafka) else None
 
     run_usdt_mark_price_stream(
         symbols=symbols,
@@ -139,6 +142,7 @@ def _cmd_ws_mark_price_usdt(tk: BinanceToolkit, args: argparse.Namespace) -> Non
         perp_only=not args.all,
         config=config,
         write_db=write_db,
+        write_kafka=write_kafka,
         enable_print=not args.quiet,
         batch_size=args.batch_size,
         flush_interval=args.flush_interval,
@@ -290,8 +294,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="将数据写入 InfluxDB",
     )
     p.add_argument(
+        "--write-kafka", "-k", action="store_true",
+        help="将数据发布到 Kafka (需要配置 kafka_bootstrap_servers)",
+    )
+    p.add_argument(
         "--quiet", "-q", action="store_true",
-        help="静默模式, 不打印到控制台 (仅在 --write-db 时有意义)",
+        help="静默模式, 不打印到控制台 (仅在 --write-db 或 --write-kafka 时有意义)",
     )
     p.add_argument(
         "--batch-size", type=int, default=100,
@@ -328,8 +336,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="将数据写入 InfluxDB",
     )
     p.add_argument(
+        "--write-kafka", "-k", action="store_true",
+        help="将数据发布到 Kafka (需要配置 kafka_bootstrap_servers)",
+    )
+    p.add_argument(
         "--quiet", "-q", action="store_true",
-        help="静默模式, 不打印到控制台 (仅在 --write-db 时有意义)",
+        help="静默模式, 不打印到控制台 (仅在 --write-db 或 --write-kafka 时有意义)",
     )
     p.add_argument(
         "--batch-size", type=int, default=500,

@@ -10,5 +10,8 @@
   "influx_host": "http://192.168.1.4:8181",
   "influx_database": "fianndata",
   "influx_measurement": "binance_ticker",
-  "influx_futures_measurement": "binance_futures"
+  "influx_futures_measurement": "binance_futures",
+  "kafka_bootstrap_servers": "localhost:9092",
+  "kafka_topic_coin": "binance.mark_price.coin",
+  "kafka_topic_usdt": "binance.mark_price.usdt"
 }

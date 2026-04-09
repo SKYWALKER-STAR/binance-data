@@ -25,6 +25,9 @@ dev = [
 influxdb = [
     "influxdb3-python>=0.6",
 ]
+kafka = [
+    "kafka-python>=2.0",
+]
 
 [project.scripts]
 binance-toolkit = "binance_toolkit.cli:main"

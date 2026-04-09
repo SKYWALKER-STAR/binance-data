@@ -26,6 +26,7 @@ import websocket
 if TYPE_CHECKING:
     from ..config import BinanceConfig
     from ..storage.influxdb import InfluxDBStorage
+    from ..storage.kafka import KafkaStorage
 
 logger = logging.getLogger("binance_toolkit.ws")
 
@@ -193,6 +194,8 @@ class MarkPriceStreamWriter:
         update_speed: str = "1s",
         perp_only: bool = True,
         enable_print: bool = True,
+        write_db: bool = True,
+        write_kafka: bool = False,
         batch_size: int = DEFAULT_BATCH_SIZE,
         flush_interval: float = DEFAULT_FLUSH_INTERVAL,
         max_retries: int = DEFAULT_MAX_RETRIES,
@@ -201,11 +204,13 @@ class MarkPriceStreamWriter:
     ):
         """
         Args:
-            config:         Binance 配置 (含 InfluxDB 配置).
+            config:         Binance 配置 (含 InfluxDB/Kafka 配置).
             symbols:        要订阅的合约列表，省略则订阅全部。
             update_speed:   更新速度 "1s" 或 "3s"。
             perp_only:      仅保留永续合约，默认 True。
             enable_print:   是否同时打印到控制台，默认 True。
+            write_db:       是否写入 InfluxDB，默认 True。
+            write_kafka:    是否发布到 Kafka，默认 False。
             batch_size:     批量写入大小，默认 100 条。
             flush_interval: 最长刷新间隔 (秒)，默认 1.0。
             max_retries:    写入失败最大重试次数，默认 3。
@@ -217,6 +222,8 @@ class MarkPriceStreamWriter:
         self._update_speed = update_speed
         self._perp_only = perp_only
         self._enable_print = enable_print
+        self._write_db = write_db
+        self._write_kafka = write_kafka
         self._batch_size = batch_size
         self._flush_interval = flush_interval
         self._max_retries = max_retries
@@ -226,6 +233,8 @@ class MarkPriceStreamWriter:
         self._queue: queue.Queue[dict] = queue.Queue()
         self._stop_event = threading.Event()
         self._storage: InfluxDBStorage | None = None
+        self._kafka: KafkaStorage | None = None
+        self._kafka_topic: str = ""
         self._stream: MarkPriceStream | None = None
         self._writer_thread: threading.Thread | None = None
 
@@ -343,8 +352,8 @@ class MarkPriceStreamWriter:
         logger.info("写入线程已结束")
 
     def _flush_buffer(self, buffer: list[dict]) -> None:
-        """将缓冲数据写入 InfluxDB (带重试)."""
-        if not self._storage:
+        """将缓冲数据写入 InfluxDB / 发布到 Kafka (带重试)."""
+        if not self._storage and not self._kafka:
             return
 
         symbols = set(item.get("s", "UNKNOWN") for item in buffer)
@@ -377,8 +386,8 @@ class MarkPriceStreamWriter:
                     self._stats["failed"] += len(buffer)
 
     def _write_batch(self, buffer: list[dict]) -> None:
-        """批量写入数据到 InfluxDB."""
-        assert self._storage is not None
+        """批量写入数据到 InfluxDB 和/或 Kafka."""
+        assert self._storage is not None or self._kafka is not None
 
         # 构建批量写入的数据点
         points = []
@@ -413,7 +422,10 @@ class MarkPriceStreamWriter:
             })
 
         # 一次性批量写入
-        self._storage.write_mark_price_batch(points)
+        if self._storage:
+            self._storage.write_mark_price_batch(points)
+        if self._kafka:
+            self._kafka.write_mark_price_batch(points, self._kafka_topic)
 
     def _signal_handler(self, signum: int, frame: Any) -> None:
         """信号处理."""
@@ -430,13 +442,20 @@ class MarkPriceStreamWriter:
         signal.signal(signal.SIGTERM, self._signal_handler)
 
         # 初始化 InfluxDB 存储
-        from ..storage.influxdb import InfluxDBStorage
-        self._storage = InfluxDBStorage(self._config)
+        if self._write_db:
+            from ..storage.influxdb import InfluxDBStorage
+            self._storage = InfluxDBStorage(self._config)
+
+        # 初始化 Kafka Producer
+        if self._write_kafka:
+            from ..storage.kafka import KafkaStorage
+            self._kafka = KafkaStorage(self._config)
+            self._kafka_topic = self._config.kafka_topic_coin
 
         sample_info = f"sample_interval={self._sample_interval}s" if self._sample_interval > 0 else "无采样"
         logger.info(
-            "币本位标记价格流写入器启动: batch_size=%d, flush_interval=%.1fs, %s, print=%s",
-            self._batch_size, self._flush_interval, sample_info, self._enable_print,
+            "币本位标记价格流写入器启动: batch_size=%d, flush_interval=%.1fs, %s, print=%s, write_db=%s, write_kafka=%s",
+            self._batch_size, self._flush_interval, sample_info, self._enable_print, self._write_db, self._write_kafka,
         )
 
         # 启动后台写入线程
@@ -472,6 +491,10 @@ class MarkPriceStreamWriter:
         # 关闭 InfluxDB 连接
         if self._storage:
             self._storage.close()
+
+        # 关闭 Kafka Producer
+        if self._kafka:
+            self._kafka.close()
 
         # 输出统计信息
         logger.info(
@@ -540,6 +563,7 @@ def run_mark_price_stream(
     perp_only: bool = True,
     config: "BinanceConfig | None" = None,
     write_db: bool = False,
+    write_kafka: bool = False,
     enable_print: bool = True,
     batch_size: int = DEFAULT_BATCH_SIZE,
     flush_interval: float = DEFAULT_FLUSH_INTERVAL,
@@ -551,11 +575,12 @@ def run_mark_price_stream(
         symbols:        要订阅的合约列表，省略则订阅全部。
         update_speed:   更新速度 "1s" 或 "3s"。
         perp_only:      仅显示永续合约，默认 True。
-        config:         Binance 配置，写入数据库时必须提供。
+        config:         Binance 配置，写入数据库或 Kafka 时必须提供。
         write_db:       是否写入 InfluxDB，默认 False。
+        write_kafka:    是否发布到 Kafka，默认 False。
         enable_print:   是否打印到控制台，默认 True。
-        batch_size:     批量写入大小 (仅 write_db=True 时有效)。
-        flush_interval: 刷新间隔秒数 (仅 write_db=True 时有效)。
+        batch_size:     批量写入大小 (仅 write_db/write_kafka=True 时有效)。
+        flush_interval: 刷新间隔秒数 (仅 write_db/write_kafka=True 时有效)。
         sample_interval: 采样间隔秒数，默认 0 不采样。设为 10 表示每合约每 10 秒存一条。
     """
     logging.basicConfig(
@@ -564,15 +589,17 @@ def run_mark_price_stream(
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    if write_db:
+    if write_db or write_kafka:
         if config is None:
-            raise ValueError("写入数据库需要提供 config 参数")
+            raise ValueError("写入数据库或 Kafka 需要提供 config 参数")
         writer = MarkPriceStreamWriter(
             config,
             symbols=symbols,
             update_speed=update_speed,
             perp_only=perp_only,
             enable_print=enable_print,
+            write_db=write_db,
+            write_kafka=write_kafka,
             batch_size=batch_size,
             flush_interval=flush_interval,
             sample_interval=sample_interval,

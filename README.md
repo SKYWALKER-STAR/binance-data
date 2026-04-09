@@ -188,7 +188,7 @@ InfluxDB 中写入的数据格式：
 
 ### 7. 币本位合约标记价格 WebSocket 流
 
-通过 WebSocket 实时获取币本位永续合约的标记价格和指数价格，支持打印到控制台和/或写入 InfluxDB。
+通过 WebSocket 实时获取币本位永续合约的标记价格和指数价格，支持打印到控制台、写入 InfluxDB 和/或发布到 Kafka。
 
 ```bash
 # 仅打印到控制台 (调试模式)
@@ -199,6 +199,12 @@ python -m binance_toolkit ws-mark-price-coin --write-db
 
 # 仅写入 InfluxDB (静默模式)
 python -m binance_toolkit ws-mark-price-coin --write-db --quiet
+
+# 发布到 Kafka + 打印到控制台
+python -m binance_toolkit ws-mark-price-coin --write-kafka
+
+# 同时写入 InfluxDB 和 Kafka (静默模式)
+python -m binance_toolkit ws-mark-price-coin --write-db --write-kafka --quiet
 
 # 自定义: 指定合约, 3秒更新, 批量写入参数
 python -m binance_toolkit ws-mark-price-coin --symbols BTCUSD_PERP,ETHUSD_PERP --speed 3s --write-db --batch-size 50
@@ -217,6 +223,7 @@ python -m binance_toolkit ws-mark-price-coin --write-db --quiet --sample-interva
 | `--speed` | 更新速度 `1s` 或 `3s`，默认 `1s` |
 | `--all` | 包含交割合约，默认仅永续合约 |
 | `--write-db` / `-w` | 写入 InfluxDB |
+| `--write-kafka` / `-k` | 发布到 Kafka |
 | `--quiet` / `-q` | 不打印到控制台 |
 | `--batch-size` | 批量写入条数，默认 100 |
 | `--flush-interval` | 最长刷新间隔秒数，默认 1.0 |
@@ -242,10 +249,20 @@ stream.run()
 # 方式二: 写入 InfluxDB (带批量写入 + 重试机制 + 采样)
 writer = MarkPriceStreamWriter(
     config,
+    write_db=True,
     enable_print=True,    # 同时打印到控制台
     batch_size=100,       # 每 100 条写入一次
     flush_interval=1.0,   # 或每 1 秒写入一次
     sample_interval=10,   # 每 10 秒采样一条 (可选)
+)
+writer.run()
+
+# 方式三: 发布到 Kafka
+writer = MarkPriceStreamWriter(
+    config,
+    write_db=False,
+    write_kafka=True,
+    enable_print=False,
 )
 writer.run()
 ```
@@ -256,10 +273,49 @@ writer.run()
 - 优雅停止时确保缓冲数据写入
 - 支持采样存储，减少数据量
 - 退出时输出统计信息
+- InfluxDB 和 Kafka 可同时启用
+
+**Kafka 前置条件：**
+
+```bash
+pip install 'binance-toolkit[kafka]'
+```
+
+配置 Kafka 连接（config.json 或环境变量）：
+
+```json
+{
+  "kafka_bootstrap_servers": "localhost:9092",
+  "kafka_topic_coin": "binance.mark_price.coin",
+  "kafka_topic_usdt": "binance.mark_price.usdt"
+}
+```
+
+环境变量方式：
+
+```bash
+export KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+export KAFKA_TOPIC_COIN=binance.mark_price.coin
+export KAFKA_TOPIC_USDT=binance.mark_price.usdt
+```
+
+Kafka 消息格式 (每条消息 Key=symbol, Value=JSON)：
+
+```json
+{
+  "symbol": "BTCUSD_PERP",
+  "mark_price": 67123.45,
+  "index_price": 67100.00,
+  "last_funding_rate": 0.00500,
+  "next_funding_time": 1712700000000,
+  "contract_type": "COIN",
+  "timestamp": "2026-04-09T12:00:00+00:00"
+}
+```
 
 ### 7.1 U 本位合约标记价格 WebSocket 流
 
-通过 WebSocket 实时获取 U 本位永续合约的标记价格和指数价格，支持打印到控制台和/或写入 InfluxDB。用法与币本位合约相同。
+通过 WebSocket 实时获取 U 本位永续合约的标记价格和指数价格，支持打印到控制台、写入 InfluxDB 和/或发布到 Kafka。用法与币本位合约相同。
 
 ```bash
 # 仅打印到控制台 (调试模式)
@@ -270,6 +326,12 @@ python -m binance_toolkit ws-mark-price-usdt --write-db
 
 # 仅写入 InfluxDB (静默模式)
 python -m binance_toolkit ws-mark-price-usdt --write-db --quiet
+
+# 发布到 Kafka
+python -m binance_toolkit ws-mark-price-usdt --write-kafka --quiet
+
+# 同时写入 InfluxDB 和 Kafka
+python -m binance_toolkit ws-mark-price-usdt --write-db --write-kafka --quiet
 
 # 自定义: 指定合约, 3秒更新, 批量写入参数
 python -m binance_toolkit ws-mark-price-usdt --symbols BTCUSDT,ETHUSDT --speed 3s --write-db --batch-size 50
@@ -297,11 +359,21 @@ stream.run()
 # 方式二: 写入 InfluxDB (带批量写入 + 重试机制)
 writer = UsdtMarkPriceStreamWriter(
     config,
+    write_db=True,
     enable_print=True,    # 同时打印到控制台
     batch_size=500,       # 每 500 条写入一次
     flush_interval=1.0,   # 或每 1 秒写入一次
     writer_threads=2,     # 2 个写入线程并行
     sample_interval=10,   # 每 10 秒采样一条 (减少数据量)
+)
+writer.run()
+
+# 方式三: 发布到 Kafka
+writer = UsdtMarkPriceStreamWriter(
+    config,
+    write_db=False,
+    write_kafka=True,
+    enable_print=False,
 )
 writer.run()
 ```
@@ -314,6 +386,7 @@ writer.run()
 | `--speed` | 更新速度 `1s` 或 `3s`，默认 `1s` |
 | `--all` | 包含交割合约，默认仅永续合约 |
 | `--write-db` / `-w` | 写入 InfluxDB |
+| `--write-kafka` / `-k` | 发布到 Kafka |
 | `--quiet` / `-q` | 不打印到控制台 |
 | `--batch-size` | 批量写入条数，默认 500 |
 | `--flush-interval` | 最长刷新间隔秒数，默认 1.0 |
