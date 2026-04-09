@@ -167,7 +167,11 @@ def _cmd_collect_mark(tk: BinanceToolkit, args: argparse.Namespace) -> None:
         _fh = logging.FileHandler(args.log_file, encoding="utf-8")
         _fh.setLevel(log_level)
         _fh.setFormatter(logging.Formatter(log_fmt, datefmt=log_datefmt))
-        logging.getLogger().addHandler(_fh)
+        root = logging.getLogger()
+        for _h in root.handlers[:]:
+            if not isinstance(_h, logging.FileHandler):
+                root.removeHandler(_h)
+        root.addHandler(_fh)
 
     symbols = [s.strip().upper() for s in args.symbols.split(",")]
     collector = MarkPriceCollector(
@@ -195,7 +199,11 @@ def _cmd_collect(tk: BinanceToolkit, args: argparse.Namespace) -> None:
         _fh = logging.FileHandler(args.log_file, encoding="utf-8")
         _fh.setLevel(log_level)
         _fh.setFormatter(logging.Formatter(log_fmt, datefmt=log_datefmt))
-        logging.getLogger().addHandler(_fh)
+        root = logging.getLogger()
+        for _h in root.handlers[:]:
+            if not isinstance(_h, logging.FileHandler):
+                root.removeHandler(_h)
+        root.addHandler(_fh)
 
     symbols = [s.strip().upper() for s in args.symbols.split(",")]
     collector = PriceCollector(
