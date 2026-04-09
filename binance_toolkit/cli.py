@@ -156,11 +156,18 @@ def _cmd_collect_mark(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     from .collector.mark_price_collector import MarkPriceCollector
 
     log_level = logging.DEBUG if args.verbose else logging.INFO
+    log_fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    log_datefmt = "%Y-%m-%d %H:%M:%S"
     logging.basicConfig(
         level=log_level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+        format=log_fmt,
+        datefmt=log_datefmt,
     )
+    if args.log_file:
+        _fh = logging.FileHandler(args.log_file, encoding="utf-8")
+        _fh.setLevel(log_level)
+        _fh.setFormatter(logging.Formatter(log_fmt, datefmt=log_datefmt))
+        logging.getLogger().addHandler(_fh)
 
     symbols = [s.strip().upper() for s in args.symbols.split(",")]
     collector = MarkPriceCollector(
@@ -177,11 +184,18 @@ def _cmd_collect(tk: BinanceToolkit, args: argparse.Namespace) -> None:
 
     # 配置日志输出
     log_level = logging.DEBUG if args.verbose else logging.INFO
+    log_fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    log_datefmt = "%Y-%m-%d %H:%M:%S"
     logging.basicConfig(
         level=log_level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+        format=log_fmt,
+        datefmt=log_datefmt,
     )
+    if args.log_file:
+        _fh = logging.FileHandler(args.log_file, encoding="utf-8")
+        _fh.setLevel(log_level)
+        _fh.setFormatter(logging.Formatter(log_fmt, datefmt=log_datefmt))
+        logging.getLogger().addHandler(_fh)
 
     symbols = [s.strip().upper() for s in args.symbols.split(",")]
     collector = PriceCollector(
@@ -205,6 +219,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--config",
         default=None,
         help="JSON 配置文件路径 (默认使用环境变量)",
+    )
+    parser.add_argument(
+        "--log-file",
+        default=None,
+        metavar="PATH",
+        help="日志文件路径, 指定后日志将同时写入该文件",
     )
 
     sub = parser.add_subparsers(dest="command", help="可用子命令")
