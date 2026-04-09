@@ -155,24 +155,6 @@ def _cmd_collect_mark(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     """启动币本位合约标记价格/指数价格采集常驻进程."""
     from .collector.mark_price_collector import MarkPriceCollector
 
-    log_level = logging.DEBUG if args.verbose else logging.INFO
-    log_fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    log_datefmt = "%Y-%m-%d %H:%M:%S"
-    logging.basicConfig(
-        level=log_level,
-        format=log_fmt,
-        datefmt=log_datefmt,
-    )
-    if args.log_file:
-        _fh = logging.FileHandler(args.log_file, encoding="utf-8")
-        _fh.setLevel(log_level)
-        _fh.setFormatter(logging.Formatter(log_fmt, datefmt=log_datefmt))
-        root = logging.getLogger()
-        for _h in root.handlers[:]:
-            if not isinstance(_h, logging.FileHandler):
-                root.removeHandler(_h)
-        root.addHandler(_fh)
-
     symbols = [s.strip().upper() for s in args.symbols.split(",")]
     collector = MarkPriceCollector(
         tk._client.config,
@@ -185,25 +167,6 @@ def _cmd_collect_mark(tk: BinanceToolkit, args: argparse.Namespace) -> None:
 def _cmd_collect(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     """启动价格采集常驻进程."""
     from .collector.price_collector import PriceCollector
-
-    # 配置日志输出
-    log_level = logging.DEBUG if args.verbose else logging.INFO
-    log_fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    log_datefmt = "%Y-%m-%d %H:%M:%S"
-    logging.basicConfig(
-        level=log_level,
-        format=log_fmt,
-        datefmt=log_datefmt,
-    )
-    if args.log_file:
-        _fh = logging.FileHandler(args.log_file, encoding="utf-8")
-        _fh.setLevel(log_level)
-        _fh.setFormatter(logging.Formatter(log_fmt, datefmt=log_datefmt))
-        root = logging.getLogger()
-        for _h in root.handlers[:]:
-            if not isinstance(_h, logging.FileHandler):
-                root.removeHandler(_h)
-        root.addHandler(_fh)
 
     symbols = [s.strip().upper() for s in args.symbols.split(",")]
     collector = PriceCollector(
@@ -451,6 +414,25 @@ def main(argv: list[str] | None = None) -> None:
     if not args.command:
         parser.print_help()
         sys.exit(1)
+
+    # 配置全局日志
+    log_level = logging.DEBUG if getattr(args, "verbose", False) else logging.INFO
+    log_fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    log_datefmt = "%Y-%m-%d %H:%M:%S"
+    if args.log_file:
+        logging.basicConfig(
+            level=log_level,
+            format=log_fmt,
+            datefmt=log_datefmt,
+            filename=args.log_file,
+            encoding="utf-8",
+        )
+    else:
+        logging.basicConfig(
+            level=log_level,
+            format=log_fmt,
+            datefmt=log_datefmt,
+        )
 
     # 加载配置: 优先 --config 指定的文件, 其次自动查找 config.json, 最后用环境变量
     if args.config:
