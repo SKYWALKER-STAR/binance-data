@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -188,38 +188,102 @@ class KafkaStorage:
     def write_account_snapshot(
         self,
         snapshots: list[dict[str, Any]],
-        topic: str = "binance.account.snapshot",
+        topic_prefix: str = "binance.account.snapshot",
     ) -> None:
-        """发布账户每日快照数据到 Kafka Topic.
+        """将账户每日快照展平后逐行发布到对应 Kafka Topic.
 
-        每条消息以 "{type}:{updateTime}" 作为消息 Key，value 为 JSON 格式的快照数据。
-        下游 ClickHouse 可通过 Kafka 引擎表消费并按账户类型写入对应分区。
+        与 ClickHouse 的 Kafka 引擎表对应（JSONEachRow，每行一条余额/持仓记录）：
+          {prefix}.spot             → SPOT 余额（每行一个资产）
+          {prefix}.margin           → MARGIN 资产（每行一个资产）
+          {prefix}.futures.asset    → FUTURES 账户资产（每行一个资产）
+          {prefix}.futures.position → FUTURES 持仓（每行一个合约，仅非零持仓）
 
         Args:
-            snapshots: snapshotVos 列表，API 原始返回，每个元素含:
-                - type:       账户类型 ("spot" / "margin" / "futures")
-                - updateTime: 快照时间戳（毫秒）
-                - data:       账户数据（结构因类型而异）
-            topic: 目标 Kafka Topic，默认 "binance.account.snapshot"。
+            snapshots:     snapshotVos 列表，来自 daily_snapshot() 的原始返回。
+            topic_prefix:  Topic 前缀，默认 "binance.account.snapshot"。
         """
         if not snapshots:
             return
 
+        total = 0
         for snap in snapshots:
-            acct_type = snap.get("type", "unknown")
-            update_time = snap.get("updateTime", 0)
-            ts_iso = datetime.fromtimestamp(update_time / 1000).isoformat() if update_time else None
-            record: dict[str, Any] = {
-                "type": acct_type,
-                "updateTime": update_time,
-                "timestamp": ts_iso,
-                "data": snap.get("data", {}),
-            }
-            key = f"{acct_type}:{update_time}"
-            self._producer.send(topic, key=key, value=record)
+            acct_type: str = snap.get("type", "").lower()
+            update_time: int = snap.get("updateTime", 0)
+            data: dict = snap.get("data", {})
+            snapshot_date = (
+                datetime.fromtimestamp(update_time / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+                if update_time else ""
+            )
+            common = {"snapshot_date": snapshot_date, "update_time": update_time}
+
+            if acct_type == "spot":
+                topic = f"{topic_prefix}.spot"
+                summary = {
+                    "total_asset_of_btc": data.get("totalAssetOfBtc", "0"),
+                }
+                for b in data.get("balances", []):
+                    record = {
+                        **common,
+                        **summary,
+                        "asset":  b.get("asset", ""),
+                        "free":   b.get("free", "0"),
+                        "locked": b.get("locked", "0"),
+                    }
+                    self._producer.send(topic, key=f"spot:{update_time}:{b.get('asset','')}", value=record)
+                    total += 1
+
+            elif acct_type == "margin":
+                topic = f"{topic_prefix}.margin"
+                summary = {
+                    "margin_level":            data.get("marginLevel", "0"),
+                    "total_asset_of_btc":      data.get("totalAssetOfBtc", "0"),
+                    "total_liability_of_btc":  data.get("totalLiabilityOfBtc", "0"),
+                    "total_net_asset_of_btc":  data.get("totalNetAssetOfBtc", "0"),
+                }
+                for a in data.get("userAssets", []):
+                    record = {
+                        **common,
+                        **summary,
+                        "asset":     a.get("asset", ""),
+                        "free":      a.get("free", "0"),
+                        "locked":    a.get("locked", "0"),
+                        "borrowed":  a.get("borrowed", "0"),
+                        "interest":  a.get("interest", "0"),
+                        "net_asset": a.get("netAsset", "0"),
+                    }
+                    self._producer.send(topic, key=f"margin:{update_time}:{a.get('asset','')}", value=record)
+                    total += 1
+
+            elif acct_type == "futures":
+                # 账户资产
+                asset_topic = f"{topic_prefix}.futures.asset"
+                for a in data.get("assets", []):
+                    record = {
+                        **common,
+                        "asset":          a.get("asset", ""),
+                        "wallet_balance":  a.get("walletBalance", "0"),
+                        "margin_balance":  a.get("marginBalance", "0"),
+                    }
+                    self._producer.send(asset_topic, key=f"futures:asset:{update_time}:{a.get('asset','')}", value=record)
+                    total += 1
+                # 持仓（仅推送非零持仓）
+                pos_topic = f"{topic_prefix}.futures.position"
+                for p in data.get("position", []):
+                    if float(p.get("positionAmt", 0)) == 0:
+                        continue
+                    record = {
+                        **common,
+                        "symbol":           p.get("symbol", ""),
+                        "entry_price":      p.get("entryPrice", "0"),
+                        "mark_price":       p.get("markPrice", "0"),
+                        "position_amt":     p.get("positionAmt", "0"),
+                        "unrealized_profit": p.get("unRealizedProfit", "0"),
+                    }
+                    self._producer.send(pos_topic, key=f"futures:pos:{update_time}:{p.get('symbol','')}", value=record)
+                    total += 1
 
         self._producer.flush()
-        logger.debug("发布 %d 条账户快照到 Topic [%s]", len(snapshots), topic)
+        logger.debug("发布 %d 条账户快照行到 Topic 前缀 [%s]", total, topic_prefix)
 
     def close(self) -> None:
         self._producer.close()

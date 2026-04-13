@@ -70,7 +70,12 @@ class AccountSnapshotCollector:
             end_time:      查询结束时间（毫秒时间戳），可选。
             enable_print:  是否将结果打印到控制台，默认 True。
             write_kafka:   是否将结果发布到 Kafka，默认 False。
-            kafka_topic:   Kafka Topic 名称，默认 "binance.account.snapshot"。
+            kafka_topic:   Kafka Topic 前缀，默认 "binance.account.snapshot"。
+                           实际写入的 Topic 为:
+                             {prefix}.spot
+                             {prefix}.margin
+                             {prefix}.futures.asset
+                             {prefix}.futures.position
         """
         self._config = config
         self._account_types: list[AccountSnapshotType] = account_types or ["SPOT", "MARGIN", "FUTURES"]
@@ -135,7 +140,7 @@ class AccountSnapshotCollector:
         if not snapshots:
             return
         try:
-            kafka_storage.write_account_snapshot(snapshots, topic=self._kafka_topic)
+            kafka_storage.write_account_snapshot(snapshots, topic_prefix=self._kafka_topic)
             logger.info(
                 "✓ 已推送 %d 条快照到 Kafka Topic [%s]",
                 len(snapshots),
