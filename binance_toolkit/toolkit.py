@@ -18,6 +18,7 @@ from .api.account import AccountAPI
 from .api.coin_futures import CoinFuturesMarketAPI
 from .api.market import MarketAPI
 from .api.trade import TradeAPI
+from .api.user_data_stream import UserDataStreamAPI
 from .client import BinanceClient
 from .config import BinanceConfig
 
@@ -26,10 +27,11 @@ class BinanceToolkit:
     """Binance API 工具箱门面.
 
     通过属性访问各业务模块:
-      - toolkit.market        → MarketAPI          (现货市场数据)
-      - toolkit.trade         → TradeAPI            (现货交易)
-      - toolkit.account       → AccountAPI          (账户信息)
-      - toolkit.coin_futures  → CoinFuturesMarketAPI (币本位合约市场数据)
+      - toolkit.market           → MarketAPI            (现货市场数据)
+      - toolkit.trade            → TradeAPI             (现货交易)
+      - toolkit.account          → AccountAPI           (账户信息)
+      - toolkit.coin_futures     → CoinFuturesMarketAPI (币本位合约市场数据)
+      - toolkit.user_data_stream → UserDataStreamAPI    (用户数据流)
 
     扩展新模块只需:
       1. 在 api/ 下新建模块继承 BaseAPI
@@ -41,6 +43,7 @@ class BinanceToolkit:
         self.market = MarketAPI(self._client)
         self.trade = TradeAPI(self._client)
         self.account = AccountAPI(self._client)
+        self.user_data_stream = UserDataStreamAPI(self._client)
 
         # 币本位合约使用独立的 DAPI base URL
         dapi_config = dataclasses.replace(config, base_url=config.dapi_base_url)

@@ -177,6 +177,93 @@ def _cmd_collect(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     collector.run()
 
 
+def _cmd_user_data_stream(tk: BinanceToolkit, args: argparse.Namespace) -> None:
+    """启动用户数据流 WebSocket."""
+    from .ws.user_data_stream import run_user_data_stream
+
+    run_user_data_stream(
+        config=tk._client.config,
+        enable_print=not args.quiet,
+    )
+
+
+def _cmd_futures_pnl(tk: BinanceToolkit, args: argparse.Namespace) -> None:
+    """显示合约未实现盈亏."""
+    from .pnl.futures_pnl import parse_futures_positions, run_futures_pnl
+
+    # 解析持仓参数
+    positions = []
+    if args.positions:
+        # 格式: BTCUSDT:LONG:60000:0.1:10,ETHUSDT:SHORT:3000:1.0:5
+        positions = parse_futures_positions(args.positions, fee_rate=args.fee_rate)
+
+    if not positions:
+        # 使用示例持仓
+        print("未指定持仓，使用示例数据。使用 --positions 参数指定实际持仓。")
+        print("格式: --positions 'BTCUSDT:LONG:60000:0.1:10,ETHUSDT:SHORT:3000:1.0:5'")
+        print("     (合约:方向:开仓价:数量:杠杆[:保证金类型])")
+        positions = None  # 使用默认示例
+
+    # 判断是否需要写入 Kafka
+    write_kafka = args.write_kafka
+    config = tk._client.config if write_kafka else None
+    enable_print = not args.quiet
+
+    run_futures_pnl(
+        positions=positions,
+        update_speed=args.speed,
+        print_interval=args.interval,
+        config=config,
+        write_kafka=write_kafka,
+        kafka_topic=args.kafka_topic,
+        enable_print=enable_print,
+    )
+
+
+def _cmd_spot_pnl(tk: BinanceToolkit, args: argparse.Namespace) -> None:
+    """显示现货未实现盈亏."""
+    from .pnl.spot_pnl import SpotPosition, run_spot_pnl
+
+    # 解析持仓参数
+    positions = []
+    if args.positions:
+        # 格式: BTC:60000:0.1,ETH:3000:1.5
+        for pos_str in args.positions.split(","):
+            parts = pos_str.strip().split(":")
+            if len(parts) == 3:
+                symbol, buy_price, quantity = parts
+                positions.append(SpotPosition(
+                    symbol=symbol.strip().upper(),
+                    buy_price=float(buy_price),
+                    quantity=float(quantity),
+                    fee_rate=args.fee_rate,
+                ))
+    
+    if not positions:
+        # 使用示例持仓
+        print("未指定持仓，使用示例数据。使用 --positions 参数指定实际持仓。")
+        print("格式: --positions 'BTC:60000:0.1,ETH:3000:1.5'")
+        positions = [
+            SpotPosition("BTC", buy_price=60000.0, quantity=0.1, fee_rate=args.fee_rate),
+            SpotPosition("ETH", buy_price=3000.0, quantity=1.0, fee_rate=args.fee_rate),
+        ]
+
+    # 判断是否需要写入 Kafka
+    write_kafka = args.write_kafka
+    config = tk._client.config if write_kafka else None
+    enable_print = not args.quiet
+
+    run_spot_pnl(
+        positions=positions,
+        update_speed=args.speed,
+        print_interval=args.interval,
+        config=config,
+        write_kafka=write_kafka,
+        kafka_topic=args.kafka_topic,
+        enable_print=enable_print,
+    )
+
+
 # ──────────────────────────────────────────────
 # 参数解析
 # ──────────────────────────────────────────────
@@ -384,6 +471,79 @@ def build_parser() -> argparse.ArgumentParser:
         help="开启 DEBUG 日志",
     )
 
+    # user-data-stream (用户数据流)
+    p = sub.add_parser(
+        "user-data-stream",
+        help="订阅用户数据流 (账户更新、余额变动、订单状态)",
+    )
+    p.add_argument(
+        "--quiet", "-q", action="store_true",
+        help="静默模式, 不打印事件到控制台",
+    )
+
+    # spot-pnl (现货未实现盈亏)
+    p = sub.add_parser("spot-pnl", help="显示现货未实现盈亏 (使用 U 本位合约 index 价格)")
+    p.add_argument(
+        "--positions", default=None,
+        help="持仓列表, 格式: 'BTC:买入价:数量,ETH:买入价:数量' 例如: 'BTC:60000:0.1,ETH:3000:1.5'",
+    )
+    p.add_argument(
+        "--fee-rate", type=float, default=0.0002,
+        help="交易手续费率, 默认 0.0002 (0.02%%)",
+    )
+    p.add_argument(
+        "--speed", default="1s", choices=["1s", "3s"],
+        help="价格更新速度: 1s (每秒) 或 3s (每3秒), 默认 1s",
+    )
+    p.add_argument(
+        "--interval", type=float, default=1.0,
+        help="盈亏打印/写入间隔秒数, 默认 1.0",
+    )
+    p.add_argument(
+        "--write-kafka", "-k", action="store_true",
+        help="将 PnL 数据发布到 Kafka",
+    )
+    p.add_argument(
+        "--kafka-topic", default="binance.pnl.spot",
+        help="Kafka Topic 名称, 默认 binance.pnl.spot",
+    )
+    p.add_argument(
+        "--quiet", "-q", action="store_true",
+        help="静默模式, 不打印到控制台",
+    )
+
+    # futures-pnl (合约未实现盈亏)
+    p = sub.add_parser("futures-pnl", help="显示合约未实现盈亏 (支持 U 本位和币本位)")
+    p.add_argument(
+        "--positions", default=None,
+        help="持仓列表, 格式: '合约:方向:开仓价:数量:杠杆[:保证金类型]' "
+             "例如: 'BTCUSDT:LONG:60000:0.1:10,ETHUSDT:SHORT:3000:1.0:5'",
+    )
+    p.add_argument(
+        "--fee-rate", type=float, default=0.0004,
+        help="交易手续费率, 默认 0.0004 (0.04%% Taker)",
+    )
+    p.add_argument(
+        "--speed", default="1s", choices=["1s", "3s"],
+        help="价格更新速度: 1s (每秒) 或 3s (每3秒), 默认 1s",
+    )
+    p.add_argument(
+        "--interval", type=float, default=1.0,
+        help="盈亏打印/写入间隔秒数, 默认 1.0",
+    )
+    p.add_argument(
+        "--write-kafka", "-k", action="store_true",
+        help="将 PnL 数据发布到 Kafka",
+    )
+    p.add_argument(
+        "--kafka-topic", default="binance.pnl.futures",
+        help="Kafka Topic 名称, 默认 binance.pnl.futures",
+    )
+    p.add_argument(
+        "--quiet", "-q", action="store_true",
+        help="静默模式, 不打印到控制台",
+    )
+
     return parser
 
 
@@ -404,6 +564,9 @@ _COMMAND_MAP = {
     "ws-mark-price-usdt": _cmd_ws_mark_price_usdt,
     "collect-mark": _cmd_collect_mark,
     "collect": _cmd_collect,
+    "user-data-stream": _cmd_user_data_stream,
+    "spot-pnl": _cmd_spot_pnl,
+    "futures-pnl": _cmd_futures_pnl,
 }
 
 

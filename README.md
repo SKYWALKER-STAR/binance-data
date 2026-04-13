@@ -27,6 +27,9 @@ biannce-api/
 │   ├── collector/            # 数据采集器
 │   │   ├── price_collector.py        # 现货价格定时采集常驻进程
 │   │   └── mark_price_collector.py   # 币本位合约标记/指数价格采集进程
+│   ├── pnl/                  # 盈亏计算模块
+│   │   ├── spot_pnl.py       # 现货未实现盈亏计算
+│   │   └── futures_pnl.py    # 合约未实现盈亏计算
 │   └── storage/              # 存储后端
 │       └── influxdb.py       # InfluxDB 写入器
 ├── tests/
@@ -468,6 +471,276 @@ InfluxDB 中写入的数据格式：
 | Measurement | Tag | Field | Timestamp |
 |-------------|-----|-------|-----------|
 | `binance_ticker` | `pair=BTCUSD`, `contract_type=PERPETUAL` | `futures_price`, `index_price`, `basis`, `basis_rate`, `annualized_basis_rate` | UTC 时间 |
+
+### 9. 现货未实现盈亏计算
+
+通过 WebSocket 实时获取 U 本位合约的 index 价格，计算现货持仓的未实现盈亏。
+
+```bash
+# 使用示例持仓数据
+python -m binance_toolkit spot-pnl
+
+# 指定实际持仓 (格式: 币种:买入价:数量)
+python -m binance_toolkit spot-pnl --positions "BTC:60000:0.1,ETH:3000:1.5"
+
+# 自定义手续费率 (默认 0.02%)
+python -m binance_toolkit spot-pnl --positions "BTC:65000:0.5" --fee-rate 0.001
+
+# 调整打印间隔 (默认 1 秒)
+python -m binance_toolkit spot-pnl --positions "BTC:60000:0.1" --interval 3
+
+# Ctrl+C 停止
+```
+
+**参数说明：**
+
+| 参数 | 说明 |
+|------|------|
+| `--positions` | 持仓列表，格式: `币种:买入价:数量`，多个用逗号分隔 |
+| `--fee-rate` | 交易手续费率，默认 0.0002 (0.02%) |
+| `--speed` | 价格更新速度 `1s` 或 `3s`，默认 `1s` |
+| `--interval` | 盈亏打印间隔秒数，默认 1.0 |
+
+**盈亏计算公式：**
+
+- 买入成本 = 买入价 × 数量 × (1 + 手续费率)
+- 卖出价值 = 现价 × 数量 × (1 - 手续费率)
+- 未实现盈亏 = 卖出价值 - 买入成本
+
+**控制台输出示例：**
+
+```
+================================================================================
+[2026-04-12 10:30:00] 现货未实现盈亏 (手续费: 0.02%)
+================================================================================
+币种            买入价          现价        数量          成本          市值          盈亏      盈亏%
+--------------------------------------------------------------------------------
+BTC          60000.00     62000.00      0.1000      6001.20      6198.76     +197.56   +3.29%
+ETH           3000.00      3100.00      1.0000      3000.60      3099.38      +98.78   +3.29%
+--------------------------------------------------------------------------------
+合计                                                 9001.80      9298.14     +296.34   +3.29%
+```
+
+在代码中使用：
+
+```python
+from binance_toolkit.pnl import SpotPosition, SpotPnLCalculator
+
+# 配置持仓
+positions = [
+    SpotPosition("BTC", buy_price=60000.0, quantity=0.1),
+    SpotPosition("ETH", buy_price=3000.0, quantity=1.5),
+    SpotPosition("SOL", buy_price=150.0, quantity=10.0, fee_rate=0.001),  # 自定义手续费
+]
+
+# 启动盈亏计算
+calculator = SpotPnLCalculator(
+    positions,
+    update_speed="1s",
+    print_interval=1.0,
+)
+calculator.run()  # 阻塞运行，Ctrl+C 停止
+```
+
+### 10. 合约未实现盈亏计算
+
+通过 WebSocket 实时获取标记价格，计算合约持仓的未实现盈亏。支持 U 本位和币本位合约。
+
+```bash
+# 使用示例持仓数据
+python -m binance_toolkit futures-pnl
+
+# 指定实际持仓 (格式: 合约:方向:开仓价:数量:杠杆[:保证金类型])
+python -m binance_toolkit futures-pnl --positions "BTCUSDT:LONG:60000:0.1:10,ETHUSDT:SHORT:3000:1.0:5"
+
+# 币本位合约
+python -m binance_toolkit futures-pnl --positions "BTCUSD_PERP:LONG:60000:100:20:COIN"
+
+# 混合 U 本位和币本位
+python -m binance_toolkit futures-pnl --positions "BTCUSDT:LONG:60000:0.1:10:USDT,BTCUSD_PERP:SHORT:61000:100:20:COIN"
+
+# 自定义手续费率 (默认 0.04% Taker)
+python -m binance_toolkit futures-pnl --positions "BTCUSDT:LONG:60000:0.1:10" --fee-rate 0.0002
+
+# 调整打印间隔 (默认 1 秒)
+python -m binance_toolkit futures-pnl --positions "BTCUSDT:LONG:60000:0.1:10" --interval 3
+
+# Ctrl+C 停止
+```
+
+**参数说明：**
+
+| 参数 | 说明 |
+|------|------|
+| `--positions` | 持仓列表，格式: `合约:方向:开仓价:数量:杠杆[:保证金类型]`，多个用逗号分隔 |
+| `--fee-rate` | 交易手续费率，默认 0.0004 (0.04% Taker) |
+| `--speed` | 价格更新速度 `1s` 或 `3s`，默认 `1s` |
+| `--interval` | 盈亏打印间隔秒数，默认 1.0 |
+
+**持仓参数格式：**
+
+- `合约`: 合约交易对，如 `BTCUSDT`（U本位）或 `BTCUSD_PERP`（币本位）
+- `方向`: `LONG`（多头）或 `SHORT`（空头）
+- `开仓价`: 开仓均价
+- `数量`: 持仓数量（合约张数或币数量）
+- `杠杆`: 杠杆倍数
+- `保证金类型`: 可选，`USDT`（默认）或 `COIN`
+
+**盈亏计算公式：**
+
+- 多头盈亏 = (当前价格 - 开仓价格) × 数量
+- 空头盈亏 = (开仓价格 - 当前价格) × 数量
+- 保证金 = 开仓名义价值 / 杠杆
+- ROE = 盈亏(含手续费) / 保证金 × 100%
+
+**控制台输出示例：**
+
+```
+====================================================================================================
+[2026-04-12 10:30:00] 合约未实现盈亏 (手续费: 0.04%)
+====================================================================================================
+合约             方向   杠杆       开仓价         标记价         数量       保证金       未实盈亏       ROE     资金费率
+----------------------------------------------------------------------------------------------------
+BTCUSDT          多  10x     60000.00     62000.00       0.1000      600.00      +200.00   +32.87%    +0.0100%
+ETHUSDT          空   5x      3000.00      2900.00       1.0000      600.00      +100.00   +16.43%    -0.0050%
+----------------------------------------------------------------------------------------------------
+合计                                                                 1200.00      +300.00   +24.65%
+
+含手续费估算: +295.04 USDT
+```
+
+在代码中使用：
+
+```python
+from binance_toolkit.pnl import (
+    FuturesPosition,
+    FuturesPnLCalculator,
+    PositionSide,
+    MarginType,
+)
+
+# 配置持仓
+positions = [
+    FuturesPosition(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        entry_price=60000.0,
+        quantity=0.1,
+        leverage=10,
+        margin_type=MarginType.USDT,
+    ),
+    FuturesPosition(
+        symbol="ETHUSDT",
+        side=PositionSide.SHORT,
+        entry_price=3000.0,
+        quantity=1.0,
+        leverage=5,
+    ),
+    # 币本位合约
+    FuturesPosition(
+        symbol="BTCUSD_PERP",
+        side=PositionSide.LONG,
+        entry_price=60000.0,
+        quantity=100,  # 合约张数
+        leverage=20,
+        margin_type=MarginType.COIN,
+    ),
+]
+
+# 启动盈亏计算
+calculator = FuturesPnLCalculator(
+    positions,
+    update_speed="1s",
+    print_interval=1.0,
+)
+calculator.run()  # 阻塞运行，Ctrl+C 停止
+```
+
+### 11. 用户数据流 (账户/订单更新)
+
+通过 WebSocket 订阅用户数据流，实时接收账户余额变动、充值提现、订单状态更新等事件。
+
+**前置条件：** 需要配置 API Key（需要读取权限）。
+
+```bash
+# 启动用户数据流，打印事件到控制台
+python -m binance_toolkit user-data-stream
+
+# 静默模式 (不打印到控制台)
+python -m binance_toolkit user-data-stream --quiet
+
+# Ctrl+C 优雅停止
+```
+
+**参数说明：**
+
+| 参数 | 说明 |
+|------|------|
+| `--quiet` / `-q` | 静默模式，不打印事件到控制台 |
+
+**支持的事件类型：**
+
+| 事件类型 | 说明 |
+|----------|------|
+| `outboundAccountPosition` | 账户余额变动（交易、充值、提现等导致） |
+| `balanceUpdate` | 余额更新（充值、提现、划转） |
+| `executionReport` | 订单状态更新（新订单、成交、取消等） |
+| `listStatus` | OCO 订单列表状态更新 |
+
+**控制台输出示例：**
+
+```
+📊 账户持仓更新 [2026-04-12 10:30:45]
+├─ BTC: 1.5 (可用) / 0.5 (锁定)
+├─ ETH: 10.0 (可用) / 2.0 (锁定)
+└─ USDT: 50000.0 (可用) / 5000.0 (锁定)
+
+💵 余额更新 [2026-04-12 10:31:00]
+├─ 资产: USDT
+├─ 变动: +1000.0
+└─ 清算时间: 2026-04-12 10:30:55
+
+📋 订单更新 [2026-04-12 10:32:15]
+├─ 交易对: BTCUSDT
+├─ 订单ID: 123456789
+├─ 类型: LIMIT
+├─ 方向: BUY
+├─ 状态: FILLED (已完全成交)
+├─ 价格: 42000.00
+├─ 数量: 0.5
+├─ 成交均价: 42000.00
+└─ 成交量: 0.5 / 0.5
+```
+
+在代码中使用：
+
+```python
+from binance_toolkit.config import BinanceConfig
+from binance_toolkit.ws import UserDataStream, run_user_data_stream
+
+config = BinanceConfig.from_env()
+
+# 方式一: 使用便捷函数
+run_user_data_stream(config, enable_print=True)
+
+# 方式二: 自定义事件处理
+def on_order_update(data):
+    print(f"订单更新: {data['s']} {data['S']} {data['X']}")
+
+stream = UserDataStream(
+    config,
+    enable_print=False,
+    on_order_update=on_order_update,
+)
+stream.run()
+```
+
+**Listen Key 管理：**
+
+- Listen Key 有效期 60 分钟
+- 程序自动每 30 分钟续期
+- 断线自动重连
+- Ctrl+C 优雅停止时自动删除 Listen Key
 
 ### 4. 代码中使用
 
