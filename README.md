@@ -742,6 +742,137 @@ stream.run()
 - 断线自动重连
 - Ctrl+C 优雅停止时自动删除 Listen Key
 
+### 12. 账户每日资产快照
+
+调用 `GET /sapi/v1/accountSnapshot` 获取账户每日资产快照，支持现货、杠杆、合约三种账户类型。
+查询结果打印到控制台，并预留了 Kafka → ClickHouse 写入管道接口。
+
+**前置条件：** 需要配置 API Key + Secret Key（或 Ed25519 私钥）。
+
+```bash
+# 查询全部三种账户类型的最近 7 日快照 (默认)
+python -m binance_toolkit account-snapshot
+
+# 仅查询现货账户
+python -m binance_toolkit account-snapshot --type SPOT
+
+# 仅查询合约账户, 返回最近 30 日
+python -m binance_toolkit account-snapshot --type FUTURES --limit 30
+
+# 同时查询现货和合约, 指定时间范围 (毫秒时间戳)
+python -m binance_toolkit account-snapshot --type SPOT,FUTURES --start 1712000000000 --end 1714000000000
+
+# 发布到 Kafka (同时打印到控制台)
+python -m binance_toolkit account-snapshot --write-kafka --kafka-topic binance.account.snapshot
+
+# 静默模式 (只写 Kafka, 不打印)
+python -m binance_toolkit account-snapshot --write-kafka --quiet
+
+# Ctrl+C / 执行完毕自动退出
+```
+
+**参数说明：**
+
+| 参数 | 说明 |
+|------|------|
+| `--type` | 账户类型，逗号分隔: `SPOT` / `MARGIN` / `FUTURES`，默认全部 |
+| `--limit` | 每种类型返回条数，范围 7~30，默认 7 |
+| `--start` | 起始时间（毫秒时间戳），可选 |
+| `--end` | 结束时间（毫秒时间戳），可选 |
+| `--write-kafka` / `-k` | 将快照数据发布到 Kafka |
+| `--kafka-topic` | Kafka Topic，默认 `binance.account.snapshot` |
+| `--quiet` / `-q` | 静默模式，不打印到控制台 |
+
+**控制台输出示例（现货账户）：**
+
+```
+════════════════════════════════════════════════════════════════════
+  Binance 每日账户快照
+════════════════════════════════════════════════════════════════════
+  账户类型: SPOT    共 7 条快照
+────────────────────────────────────────────────────────────────────
+  [1/7]
+  日期           : 2026-04-13 00:00:00 UTC
+  BTC 总估值     : 0.15432100 BTC
+  资产           可用 (free)              锁定 (locked)
+  BTC            0.10000000               0.00000000
+  USDT           5231.84000000            0.00000000
+```
+
+**控制台输出示例（合约账户）：**
+
+```
+════════════════════════════════════════════════════════════════════
+  Binance 每日账户快照
+════════════════════════════════════════════════════════════════════
+  账户类型: FUTURES    共 7 条快照
+────────────────────────────────────────────────────────────────────
+  [1/7]
+  日期           : 2026-04-13 00:00:00 UTC
+  资产           钱包余额 (walletBalance)
+  USDT           1200.00000000
+  合约           持仓量               开仓价 (entryPrice)
+  BTCUSDT        0.01000000           60000.00000000
+```
+
+在代码中使用：
+
+```python
+from binance_toolkit.config import BinanceConfig
+from binance_toolkit.collector.account_snapshot_collector import AccountSnapshotCollector
+
+config = BinanceConfig.from_env()
+
+# 仅打印到控制台
+collector = AccountSnapshotCollector(
+    config,
+    account_types=["SPOT", "FUTURES"],
+    limit=7,
+)
+collector.run()
+
+# 同时推送到 Kafka (后续流入 ClickHouse)
+collector = AccountSnapshotCollector(
+    config,
+    account_types=["SPOT", "MARGIN", "FUTURES"],
+    limit=30,
+    write_kafka=True,
+    kafka_topic="binance.account.snapshot",
+    enable_print=False,
+)
+collector.run()
+```
+
+**Kafka 消息格式 (每条消息 Key=`{type}:{updateTime}`, Value=JSON)：**
+
+```json
+{
+  "type": "spot",
+  "updateTime": 1744502400000,
+  "timestamp": "2026-04-13T00:00:00",
+  "data": {
+    "totalAssetOfBtc": "0.15432100",
+    "balances": [
+      { "asset": "BTC", "free": "0.10000000", "locked": "0.00000000" },
+      { "asset": "USDT", "free": "5231.84000000", "locked": "0.00000000" }
+    ]
+  }
+}
+```
+
+**数据流说明（Kafka → ClickHouse）：**
+
+1. 启动采集器，快照数据推送至 Kafka Topic `binance.account.snapshot`
+2. ClickHouse 配置 Kafka 引擎表消费该 Topic
+3. 通过 Materialized View 将数据写入持久化表，按 `type` 和 `updateTime` 分区
+
+**API 接口约束：**
+
+- 每次请求 IP 权重: 2400（注意频率限制）
+- 查询时间跨度不超过 30 天
+- 仅支持查询最近一个月数据
+- `limit` 范围 7 ~ 30
+
 ### 4. 代码中使用
 
 ```python

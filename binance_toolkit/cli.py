@@ -187,6 +187,24 @@ def _cmd_user_data_stream(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     )
 
 
+def _cmd_account_snapshot(tk: BinanceToolkit, args: argparse.Namespace) -> None:
+    """获取账户每日资产快照."""
+    from .collector.account_snapshot_collector import AccountSnapshotCollector
+
+    account_types = [t.strip().upper() for t in args.account_types.split(",")]
+    collector = AccountSnapshotCollector(
+        tk._client.config,
+        account_types=account_types,  # type: ignore[arg-type]
+        limit=args.limit,
+        start_time=args.start_time,
+        end_time=args.end_time,
+        enable_print=not args.quiet,
+        write_kafka=args.write_kafka,
+        kafka_topic=args.kafka_topic,
+    )
+    collector.run()
+
+
 def _cmd_futures_pnl(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     """显示合约未实现盈亏."""
     from .pnl.futures_pnl import parse_futures_positions, run_futures_pnl
@@ -481,6 +499,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="静默模式, 不打印事件到控制台",
     )
 
+    # account-snapshot (账户每日快照)
+    p = sub.add_parser(
+        "account-snapshot",
+        help="获取账户每日资产快照 (SPOT/MARGIN/FUTURES)",
+    )
+    p.add_argument(
+        "--type", dest="account_types", default="SPOT,MARGIN,FUTURES",
+        metavar="TYPE[,TYPE...]",
+        help="账户类型, 逗号分隔: SPOT / MARGIN / FUTURES (默认全部)",
+    )
+    p.add_argument(
+        "--limit", type=int, default=7, metavar="7~30",
+        help="每种账户类型返回的快照条数, 范围 7~30 (默认 7)",
+    )
+    p.add_argument(
+        "--start", dest="start_time", type=int, default=None, metavar="MS",
+        help="起始时间 (毫秒时间戳), 可选",
+    )
+    p.add_argument(
+        "--end", dest="end_time", type=int, default=None, metavar="MS",
+        help="结束时间 (毫秒时间戳), 可选",
+    )
+    p.add_argument(
+        "--write-kafka", "-k", action="store_true",
+        help="将快照数据发布到 Kafka (需配置 kafka_bootstrap_servers)",
+    )
+    p.add_argument(
+        "--kafka-topic", default="binance.account.snapshot",
+        help="Kafka Topic 名称, 默认 binance.account.snapshot",
+    )
+    p.add_argument(
+        "--quiet", "-q", action="store_true",
+        help="静默模式, 不打印到控制台",
+    )
+
     # spot-pnl (现货未实现盈亏)
     p = sub.add_parser("spot-pnl", help="显示现货未实现盈亏 (使用 U 本位合约 index 价格)")
     p.add_argument(
@@ -565,6 +618,7 @@ _COMMAND_MAP = {
     "collect-mark": _cmd_collect_mark,
     "collect": _cmd_collect,
     "user-data-stream": _cmd_user_data_stream,
+    "account-snapshot": _cmd_account_snapshot,
     "spot-pnl": _cmd_spot_pnl,
     "futures-pnl": _cmd_futures_pnl,
 }

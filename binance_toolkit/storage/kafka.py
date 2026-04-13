@@ -185,6 +185,42 @@ class KafkaStorage:
         self._producer.flush()
         logger.debug("发布 %d 条合约 PnL 到 Topic [%s]", len(records), topic)
 
+    def write_account_snapshot(
+        self,
+        snapshots: list[dict[str, Any]],
+        topic: str = "binance.account.snapshot",
+    ) -> None:
+        """发布账户每日快照数据到 Kafka Topic.
+
+        每条消息以 "{type}:{updateTime}" 作为消息 Key，value 为 JSON 格式的快照数据。
+        下游 ClickHouse 可通过 Kafka 引擎表消费并按账户类型写入对应分区。
+
+        Args:
+            snapshots: snapshotVos 列表，API 原始返回，每个元素含:
+                - type:       账户类型 ("spot" / "margin" / "futures")
+                - updateTime: 快照时间戳（毫秒）
+                - data:       账户数据（结构因类型而异）
+            topic: 目标 Kafka Topic，默认 "binance.account.snapshot"。
+        """
+        if not snapshots:
+            return
+
+        for snap in snapshots:
+            acct_type = snap.get("type", "unknown")
+            update_time = snap.get("updateTime", 0)
+            ts_iso = datetime.fromtimestamp(update_time / 1000).isoformat() if update_time else None
+            record: dict[str, Any] = {
+                "type": acct_type,
+                "updateTime": update_time,
+                "timestamp": ts_iso,
+                "data": snap.get("data", {}),
+            }
+            key = f"{acct_type}:{update_time}"
+            self._producer.send(topic, key=key, value=record)
+
+        self._producer.flush()
+        logger.debug("发布 %d 条账户快照到 Topic [%s]", len(snapshots), topic)
+
     def close(self) -> None:
         self._producer.close()
         logger.info("Kafka Producer 已关闭")
