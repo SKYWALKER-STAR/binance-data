@@ -15,6 +15,7 @@ from typing import Optional
 _DEFAULT_BASE_URL = "https://api.binance.com"
 _DEFAULT_DAPI_BASE_URL = "https://dapi.binance.com"
 _DEFAULT_FAPI_WS_URL = "wss://fstream.binance.com/ws"
+_DEFAULT_SPOT_WS_URL = "wss://ws-api.binance.com:443/ws-api/v3"
 _CONFIG_FILE_NAME = "config.json"
 
 
@@ -26,6 +27,7 @@ class BinanceConfig:
     base_url: str = _DEFAULT_BASE_URL
     dapi_base_url: str = _DEFAULT_DAPI_BASE_URL
     fapi_ws_url: str = _DEFAULT_FAPI_WS_URL  # U本位合约 WebSocket 地址
+    spot_ws_url: str = _DEFAULT_SPOT_WS_URL  # 现货 WebSocket API 地址
     private_key_path: Optional[str] = None
     private_key_password: Optional[str] = None
     secret_key: Optional[str] = None
@@ -43,6 +45,7 @@ class BinanceConfig:
     kafka_topic_coin: str = "binance.mark_price.coin"    # 币本位合约标记价格 Topic
     kafka_topic_usdt: str = "binance.mark_price.usdt"    # U本位合约标记价格 Topic
     kafka_topic_futures_trade: str = "binance.trade.usdt_futures"  # U本位合约交易结果 Topic
+    kafka_topic_spot_trade: str = "binance.trade.spot"   # 现货交易结果 Topic
 
     # ---------- 工厂方法 ----------
 
@@ -55,6 +58,7 @@ class BinanceConfig:
             BINANCE_BASE_URL       (可选, 默认 https://api.binance.com)
             BINANCE_DAPI_BASE_URL  (可选, 默认 https://dapi.binance.com)
             BINANCE_FAPI_WS_URL    (可选, 默认 wss://fstream.binance.com/ws)
+            BINANCE_SPOT_WS_URL    (可选, 默认 wss://ws-api.binance.com:443/ws-api/v3)
             BINANCE_PRIVATE_KEY    (可选, Ed25519 私钥路径)
             BINANCE_PRIVATE_KEY_PW (可选, 私钥密码)
             BINANCE_SECRET_KEY     (可选, HMAC 密钥)
@@ -68,6 +72,7 @@ class BinanceConfig:
             KAFKA_TOPIC_COIN          (可选, 币本位标记价格 Topic, 默认 binance.mark_price.coin)
             KAFKA_TOPIC_USDT          (可选, U本位标记价格 Topic, 默认 binance.mark_price.usdt)
             KAFKA_TOPIC_FUTURES_TRADE (可选, U本位合约交易结果 Topic, 默认 binance.trade.usdt_futures)
+            KAFKA_TOPIC_SPOT_TRADE    (可选, 现货交易结果 Topic, 默认 binance.trade.spot)
         """
         api_key = os.environ.get("BINANCE_API_KEY", "")
         if not api_key:
@@ -77,6 +82,7 @@ class BinanceConfig:
             base_url=os.environ.get("BINANCE_BASE_URL", _DEFAULT_BASE_URL),
             dapi_base_url=os.environ.get("BINANCE_DAPI_BASE_URL", _DEFAULT_DAPI_BASE_URL),
             fapi_ws_url=os.environ.get("BINANCE_FAPI_WS_URL", _DEFAULT_FAPI_WS_URL),
+            spot_ws_url=os.environ.get("BINANCE_SPOT_WS_URL", _DEFAULT_SPOT_WS_URL),
             private_key_path=os.environ.get("BINANCE_PRIVATE_KEY"),
             private_key_password=os.environ.get("BINANCE_PRIVATE_KEY_PW"),
             secret_key=os.environ.get("BINANCE_SECRET_KEY"),
@@ -90,6 +96,7 @@ class BinanceConfig:
             kafka_topic_coin=os.environ.get("KAFKA_TOPIC_COIN", "binance.mark_price.coin"),
             kafka_topic_usdt=os.environ.get("KAFKA_TOPIC_USDT", "binance.mark_price.usdt"),
             kafka_topic_futures_trade=os.environ.get("KAFKA_TOPIC_FUTURES_TRADE", "binance.trade.usdt_futures"),
+            kafka_topic_spot_trade=os.environ.get("KAFKA_TOPIC_SPOT_TRADE", "binance.trade.spot"),
         )
 
     @classmethod
@@ -111,6 +118,7 @@ class BinanceConfig:
             base_url=data.get("base_url", _DEFAULT_BASE_URL),
             dapi_base_url=data.get("dapi_base_url", _DEFAULT_DAPI_BASE_URL),
             fapi_ws_url=data.get("fapi_ws_url", _DEFAULT_FAPI_WS_URL),
+            spot_ws_url=data.get("spot_ws_url", _DEFAULT_SPOT_WS_URL),
             private_key_path=data.get("private_key_path"),
             private_key_password=data.get("private_key_password"),
             secret_key=data.get("secret_key"),
@@ -124,4 +132,5 @@ class BinanceConfig:
             kafka_topic_coin=data.get("kafka_topic_coin", "binance.mark_price.coin"),
             kafka_topic_usdt=data.get("kafka_topic_usdt", "binance.mark_price.usdt"),
             kafka_topic_futures_trade=data.get("kafka_topic_futures_trade", "binance.trade.usdt_futures"),
+            kafka_topic_spot_trade=data.get("kafka_topic_spot_trade", "binance.trade.spot"),
         )

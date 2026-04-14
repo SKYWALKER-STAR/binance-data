@@ -24,7 +24,8 @@ biannce-api/
 │   ├── ws/                   # WebSocket 模块
 │   │   ├── coin_mark_price_stream.py  # 币本位合约标记价格实时流
 │   │   ├── usdt_mark_price_stream.py  # U本位合约标记价格实时流
-│   │   └── futures_trade_ws.py        # U本位合约 WebSocket 交易客户端
+│   │   ├── futures_trade_ws.py        # U本位合约 WebSocket 交易客户端
+│   │   └── spot_trade_ws.py           # 现货 WebSocket 交易客户端
 │   ├── collector/            # 数据采集器
 │   │   ├── price_collector.py        # 现货价格定时采集常驻进程
 │   │   └── mark_price_collector.py   # 币本位合约标记/指数价格采集进程
@@ -1189,7 +1190,498 @@ SELECT
 FROM binance_futures_trade_queue;
 ```
 
+#### 查询持仓信息
 
+通过 WebSocket API 查询当前 U 本位合约持仓信息，支持写入 Kafka。
+
+```python
+from binance_toolkit.config import BinanceConfig
+from binance_toolkit.storage.kafka import KafkaStorage
+from binance_toolkit.ws.futures_trade_ws import FuturesTradeWsClient
+
+config = BinanceConfig.from_env()
+kafka = KafkaStorage(config)
+
+with FuturesTradeWsClient(config, kafka_storage=kafka) as client:
+
+    # --- 查询指定交易对持仓 ---
+    positions = client.query_position(symbol="BTCUSDT")
+    for pos in positions:
+        print(f"{pos['symbol']} {pos['positionSide']}: "
+              f"数量={pos['positionAmt']}, "
+              f"开仓价={pos['entryPrice']}, "
+              f"标记价={pos['markPrice']}, "
+              f"未实现盈亏={pos['unRealizedProfit']}")
+
+    # --- 查询所有持仓 ---
+    all_positions = client.query_position()
+    print(f"共 {len(all_positions)} 个持仓")
+
+kafka.close()
+```
+
+#### 持仓 Kafka Topic 设计
+
+| Topic | 说明 |
+|-------|------|
+| `binance.position.usdt_futures` | U 本位合约持仓快照 |
+
+#### 持仓消息格式（Key=symbol:positionSide, Value=JSON）
+
+```json
+{
+  "symbol":                    "BTCUSDT",
+  "position_side":             "BOTH",
+  "position_amt":              "0.100",
+  "entry_price":               "60000.00",
+  "break_even_price":          "60012.00",
+  "mark_price":                "61234.56",
+  "unrealized_profit":         "123.456",
+  "liquidation_price":         "45000.00",
+  "isolated_margin":           "0.00000000",
+  "notional":                  "6123.456",
+  "margin_asset":              "USDT",
+  "isolated_wallet":           "0",
+  "initial_margin":            "612.3456",
+  "maint_margin":              "24.49382",
+  "position_initial_margin":   "612.3456",
+  "open_order_initial_margin": "0",
+  "adl":                       2,
+  "bid_notional":              "0",
+  "ask_notional":              "0",
+  "update_time":               1702555534435,
+  "updated_at":                "2026-04-14T08:00:00.435000+00:00",
+  "queried_at":                "2026-04-14T08:00:00.123456+00:00",
+  "recorded_at":               "2026-04-14T08:00:00.500000+00:00"
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `position_amt` | 持仓数量（正为多仓，负为空仓）|
+| `entry_price` | 开仓均价 |
+| `mark_price` | 当前标记价格 |
+| `unrealized_profit` | 未实现盈亏 |
+| `liquidation_price` | 强平价格（全仓模式为 "0"）|
+| `queried_at` | **查询发起时间** — 客户端发送请求前记录的本地 UTC 时间 |
+| `updated_at` | **持仓更新时间** — 来自 Binance 响应中的 `updateTime` 字段 |
+
+#### ClickHouse 持仓表建表参考
+
+```sql
+-- Kafka 引擎表（消费 binance.position.usdt_futures）
+CREATE TABLE binance_futures_position_queue
+(
+    symbol                     String,
+    position_side              String,
+    position_amt               Nullable(String),
+    entry_price                Nullable(String),
+    break_even_price           Nullable(String),
+    mark_price                 Nullable(String),
+    unrealized_profit          Nullable(String),
+    liquidation_price          Nullable(String),
+    isolated_margin            Nullable(String),
+    notional                   Nullable(String),
+    margin_asset               Nullable(String),
+    isolated_wallet            Nullable(String),
+    initial_margin             Nullable(String),
+    maint_margin               Nullable(String),
+    position_initial_margin    Nullable(String),
+    open_order_initial_margin  Nullable(String),
+    adl                        Nullable(Int8),
+    bid_notional               Nullable(String),
+    ask_notional               Nullable(String),
+    update_time                Nullable(Int64),
+    updated_at                 Nullable(String),
+    queried_at                 Nullable(String),
+    recorded_at                Nullable(String)
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'localhost:9092',
+    kafka_topic_list  = 'binance.position.usdt_futures',
+    kafka_group_name  = 'clickhouse_futures_position',
+    kafka_format      = 'JSONEachRow';
+
+-- 持久化表
+CREATE TABLE binance_futures_position
+(
+    symbol                     LowCardinality(String),
+    position_side              LowCardinality(String),
+    position_amt               Decimal(18, 8),
+    entry_price                Decimal(18, 8),
+    break_even_price           Decimal(18, 8),
+    mark_price                 Decimal(18, 8),
+    unrealized_profit          Decimal(18, 8),
+    liquidation_price          Decimal(18, 8),
+    isolated_margin            Decimal(18, 8),
+    notional                   Decimal(18, 8),
+    margin_asset               LowCardinality(String),
+    isolated_wallet            Decimal(18, 8),
+    initial_margin             Decimal(18, 8),
+    maint_margin               Decimal(18, 8),
+    position_initial_margin    Decimal(18, 8),
+    open_order_initial_margin  Decimal(18, 8),
+    adl                        Int8,
+    bid_notional               Decimal(18, 8),
+    ask_notional               Decimal(18, 8),
+    update_time                Int64,
+    updated_at                 Nullable(DateTime64(6, 'UTC')),
+    queried_at                 DateTime64(6, 'UTC'),
+    recorded_at                DateTime64(6, 'UTC')
+)
+ENGINE = MergeTree
+ORDER BY (symbol, position_side, recorded_at);
+
+-- Materialized View（消费队列 → 持久化）
+CREATE MATERIALIZED VIEW binance_futures_position_mv TO binance_futures_position AS
+SELECT
+    symbol,
+    position_side,
+    toDecimal64(ifNull(position_amt,'0'), 8)              AS position_amt,
+    toDecimal64(ifNull(entry_price,'0'), 8)               AS entry_price,
+    toDecimal64(ifNull(break_even_price,'0'), 8)          AS break_even_price,
+    toDecimal64(ifNull(mark_price,'0'), 8)                AS mark_price,
+    toDecimal64(ifNull(unrealized_profit,'0'), 8)         AS unrealized_profit,
+    toDecimal64(ifNull(liquidation_price,'0'), 8)         AS liquidation_price,
+    toDecimal64(ifNull(isolated_margin,'0'), 8)           AS isolated_margin,
+    toDecimal64(ifNull(notional,'0'), 8)                  AS notional,
+    ifNull(margin_asset,'USDT')                           AS margin_asset,
+    toDecimal64(ifNull(isolated_wallet,'0'), 8)           AS isolated_wallet,
+    toDecimal64(ifNull(initial_margin,'0'), 8)            AS initial_margin,
+    toDecimal64(ifNull(maint_margin,'0'), 8)              AS maint_margin,
+    toDecimal64(ifNull(position_initial_margin,'0'), 8)   AS position_initial_margin,
+    toDecimal64(ifNull(open_order_initial_margin,'0'), 8) AS open_order_initial_margin,
+    ifNull(adl, 0)                                        AS adl,
+    toDecimal64(ifNull(bid_notional,'0'), 8)              AS bid_notional,
+    toDecimal64(ifNull(ask_notional,'0'), 8)              AS ask_notional,
+    ifNull(update_time, 0)                                AS update_time,
+    if(updated_at IS NULL, NULL, parseDateTimeBestEffort(updated_at)) AS updated_at,
+    parseDateTimeBestEffort(ifNull(queried_at,''))        AS queried_at,
+    parseDateTimeBestEffort(ifNull(recorded_at,''))       AS recorded_at
+FROM binance_futures_position_queue;
+```
+
+### 14. 现货 WebSocket 交易
+
+通过持久 WebSocket 连接（`wss://ws-api.binance.com:443/ws-api/v3`）调用 Binance 现货交易 API，
+支持下单、撤销订单、查询订单和撤销所有订单。每笔交易结果自动记录**交易发起时间**和**成交时间**，
+并写入 Kafka Topic，再由 Kafka 流入 ClickHouse 等数据库。
+
+**前置条件：** 需要配置 API Key + Secret Key（或 Ed25519 私钥），并安装 Kafka 依赖。
+
+```bash
+pip install 'binance-toolkit[kafka]'
+```
+
+#### Kafka Topic 设计
+
+| Topic | 说明 |
+|-------|------|
+| `binance.trade.spot` | 现货每笔交易操作结果（下单 / 撤单 / 查单 / 撤销全部） |
+
+#### 消息格式（每条消息 Key=symbol, Value=JSON）
+
+```json
+{
+  "action":                     "new_order",
+  "order_id":                   28,
+  "order_list_id":              -1,
+  "client_order_id":            "6gCrw2kRUAF9CvJDGP16IP",
+  "orig_client_order_id":       null,
+  "symbol":                     "BTCUSDT",
+  "side":                       "SELL",
+  "type":                       "LIMIT",
+  "time_in_force":              "GTC",
+  "quantity":                   "1.00000000",
+  "quote_order_qty":            null,
+  "price":                      "0.10000000",
+  "stop_price":                 null,
+  "trailing_delta":             null,
+  "trailing_time":              null,
+  "iceberg_qty":                "0.00000000",
+  "executed_qty":               "0.00000000",
+  "cummulative_quote_qty":      "0.00000000",
+  "status":                     "NEW",
+  "working_time":               1507725176595,
+  "self_trade_prevention_mode": "NONE",
+  "prevented_match_id":         null,
+  "prevented_quantity":         null,
+  "strategy_id":                null,
+  "strategy_type":              null,
+  "fills":                      null,
+  "sent_at":                    "2026-04-14T08:00:00.123456+00:00",
+  "transact_at":                "2026-04-14T08:00:00.435000+00:00",
+  "transact_time":              1507725176595,
+  "recorded_at":                "2026-04-14T08:00:00.500000+00:00"
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `action` | 操作类型: `new_order` / `cancel_order` / `query_order` / `cancel_all_orders` |
+| `sent_at` | **交易发起时间** — 客户端发送请求前记录的本地 UTC 时间（ISO 8601）|
+| `transact_at` | **成交时间** — 来自 Binance 响应中的 `transactTime` 字段（ISO 8601）|
+| `transact_time` | Binance 原始 `transactTime` 毫秒时间戳 |
+| `recorded_at` | 写入 Kafka 时的本地 UTC 时间 |
+| `fills` | 成交明细 JSON 字符串（仅响应类型为 FULL 时包含）|
+
+#### 在代码中使用
+
+```python
+from binance_toolkit.config import BinanceConfig
+from binance_toolkit.storage.kafka import KafkaStorage
+from binance_toolkit.ws.spot_trade_ws import SpotTradeWsClient
+
+config = BinanceConfig.from_env()
+
+# 使用 with 语句自动管理连接
+kafka = KafkaStorage(config)
+with SpotTradeWsClient(config, kafka_storage=kafka) as client:
+
+    # --- 下单 (LIMIT) ---
+    result = client.new_order(
+        symbol="BTCUSDT",
+        side="BUY",
+        order_type="LIMIT",
+        quantity="0.001",
+        price="60000",
+        time_in_force="GTC",
+    )
+    print("下单:", result["orderId"], result["status"])
+
+    # --- 下单 (MARKET) ---
+    result = client.new_order(
+        symbol="ETHUSDT",
+        side="SELL",
+        order_type="MARKET",
+        quantity="0.1",
+    )
+
+    # --- 下单 (市价金额) ---
+    result = client.new_order(
+        symbol="BTCUSDT",
+        side="BUY",
+        order_type="MARKET",
+        quote_order_qty="100",   # 用 100 USDT 买入
+    )
+
+    # --- 止损限价单 ---
+    result = client.new_order(
+        symbol="BTCUSDT",
+        side="SELL",
+        order_type="STOP_LOSS_LIMIT",
+        quantity="0.001",
+        price="58000",
+        stop_price="58500",
+        time_in_force="GTC",
+    )
+
+    # --- 冰山订单 ---
+    result = client.new_order(
+        symbol="BTCUSDT",
+        side="BUY",
+        order_type="LIMIT",
+        quantity="1",
+        price="60000",
+        time_in_force="GTC",
+        iceberg_qty="0.1",       # 每次只显示 0.1 的挂单量
+    )
+
+    # --- 撤销订单 ---
+    result = client.cancel_order(
+        symbol="BTCUSDT",
+        order_id=28,
+    )
+    print("撤单:", result["status"])   # "CANCELED"
+
+    # --- 使用自定义 ID 撤销 ---
+    result = client.cancel_order(
+        symbol="BTCUSDT",
+        orig_client_order_id="6gCrw2kRUAF9CvJDGP16IP",
+    )
+
+    # --- 查询订单 ---
+    result = client.query_order(
+        symbol="BTCUSDT",
+        order_id=28,
+    )
+    print("订单状态:", result["status"])
+
+    # --- 撤销全部订单 ---
+    results = client.cancel_all_orders(symbol="BTCUSDT")
+    print(f"已撤销 {len(results)} 个订单")
+
+kafka.close()
+```
+
+#### 配置说明
+
+```json
+{
+  "spot_ws_url": "wss://ws-api.binance.com:443/ws-api/v3",
+  "kafka_bootstrap_servers": "localhost:9092",
+  "kafka_topic_spot_trade": "binance.trade.spot"
+}
+```
+
+| 环境变量 | 说明 | 默认值 |
+|---------|------|--------|
+| `BINANCE_SPOT_WS_URL` | 现货 WebSocket API 地址 | `wss://ws-api.binance.com:443/ws-api/v3` |
+| `KAFKA_BOOTSTRAP_SERVERS` | Kafka 地址（逗号分隔） | — |
+| `KAFKA_TOPIC_SPOT_TRADE` | 交易结果 Topic | `binance.trade.spot` |
+
+#### `SpotTradeWsClient` 参数
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `config` | `BinanceConfig` | 含 API Key + 签名密钥的配置（必填）|
+| `kafka_storage` | `KafkaStorage` | Kafka 存储实例，不传则不写 Kafka |
+| `kafka_topic` | `str` | 目标 Topic（默认 `binance.trade.spot`）|
+| `request_timeout` | `int` | 单次请求超时秒数（默认 `10`）|
+
+#### 支持的订单类型
+
+| 订单类型 | 必填参数 | 可选参数 |
+|---------|---------|---------|
+| `LIMIT` | `quantity`, `price`, `timeInForce` | `icebergQty` |
+| `MARKET` | `quantity` 或 `quoteOrderQty` | — |
+| `LIMIT_MAKER` | `quantity`, `price` | — |
+| `STOP_LOSS` | `quantity`, `stopPrice` | `trailingDelta` |
+| `STOP_LOSS_LIMIT` | `quantity`, `price`, `stopPrice`, `timeInForce` | `trailingDelta`, `icebergQty` |
+| `TAKE_PROFIT` | `quantity`, `stopPrice` | `trailingDelta` |
+| `TAKE_PROFIT_LIMIT` | `quantity`, `price`, `stopPrice`, `timeInForce` | `trailingDelta`, `icebergQty` |
+
+#### ClickHouse 建表参考
+
+```sql
+-- Kafka 引擎表（消费 binance.trade.spot）
+CREATE TABLE binance_spot_trade_queue
+(
+    action                     String,
+    order_id                   Nullable(Int64),
+    order_list_id              Nullable(Int64),
+    client_order_id            Nullable(String),
+    orig_client_order_id       Nullable(String),
+    symbol                     String,
+    side                       Nullable(String),
+    type                       Nullable(String),
+    time_in_force              Nullable(String),
+    quantity                   Nullable(String),
+    quote_order_qty            Nullable(String),
+    price                      Nullable(String),
+    stop_price                 Nullable(String),
+    trailing_delta             Nullable(Int64),
+    trailing_time              Nullable(Int64),
+    iceberg_qty                Nullable(String),
+    executed_qty               Nullable(String),
+    cummulative_quote_qty      Nullable(String),
+    status                     Nullable(String),
+    working_time               Nullable(Int64),
+    self_trade_prevention_mode Nullable(String),
+    prevented_match_id         Nullable(Int64),
+    prevented_quantity         Nullable(String),
+    strategy_id                Nullable(Int64),
+    strategy_type              Nullable(Int64),
+    fills                      Nullable(String),
+    sent_at                    Nullable(String),
+    transact_at                Nullable(String),
+    transact_time              Nullable(Int64),
+    recorded_at                Nullable(String)
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'localhost:9092',
+    kafka_topic_list  = 'binance.trade.spot',
+    kafka_group_name  = 'clickhouse_spot_trade',
+    kafka_format      = 'JSONEachRow';
+
+-- 持久化表
+CREATE TABLE binance_spot_trade
+(
+    action                     LowCardinality(String),
+    order_id                   Int64,
+    order_list_id              Int64,
+    client_order_id            String,
+    orig_client_order_id       String,
+    symbol                     LowCardinality(String),
+    side                       LowCardinality(String),
+    type                       LowCardinality(String),
+    time_in_force              LowCardinality(String),
+    quantity                   Decimal(18, 8),
+    quote_order_qty            Decimal(18, 8),
+    price                      Decimal(18, 8),
+    stop_price                 Decimal(18, 8),
+    trailing_delta             Int64,
+    trailing_time              Int64,
+    iceberg_qty                Decimal(18, 8),
+    executed_qty               Decimal(18, 8),
+    cummulative_quote_qty      Decimal(18, 8),
+    status                     LowCardinality(String),
+    working_time               Int64,
+    self_trade_prevention_mode LowCardinality(String),
+    prevented_match_id         Int64,
+    prevented_quantity         Decimal(18, 8),
+    strategy_id                Int64,
+    strategy_type              Int64,
+    fills                      String,
+    sent_at                    DateTime64(6, 'UTC'),
+    transact_at                Nullable(DateTime64(6, 'UTC')),
+    transact_time              Int64,
+    recorded_at                DateTime64(6, 'UTC')
+)
+ENGINE = MergeTree
+ORDER BY (symbol, order_id, recorded_at);
+
+-- Materialized View（消费队列 → 持久化）
+CREATE MATERIALIZED VIEW binance_spot_trade_mv TO binance_spot_trade AS
+SELECT
+    action,
+    ifNull(order_id, 0)              AS order_id,
+    ifNull(order_list_id, -1)        AS order_list_id,
+    ifNull(client_order_id, '')      AS client_order_id,
+    ifNull(orig_client_order_id, '') AS orig_client_order_id,
+    symbol,
+    ifNull(side, '')                 AS side,
+    ifNull(type, '')                 AS type,
+    ifNull(time_in_force, '')        AS time_in_force,
+    toDecimal64(ifNull(quantity, '0'), 8)              AS quantity,
+    toDecimal64(ifNull(quote_order_qty, '0'), 8)       AS quote_order_qty,
+    toDecimal64(ifNull(price, '0'), 8)                 AS price,
+    toDecimal64(ifNull(stop_price, '0'), 8)            AS stop_price,
+    ifNull(trailing_delta, 0)        AS trailing_delta,
+    ifNull(trailing_time, 0)         AS trailing_time,
+    toDecimal64(ifNull(iceberg_qty, '0'), 8)           AS iceberg_qty,
+    toDecimal64(ifNull(executed_qty, '0'), 8)          AS executed_qty,
+    toDecimal64(ifNull(cummulative_quote_qty, '0'), 8) AS cummulative_quote_qty,
+    ifNull(status, '')               AS status,
+    ifNull(working_time, 0)          AS working_time,
+    ifNull(self_trade_prevention_mode, '') AS self_trade_prevention_mode,
+    ifNull(prevented_match_id, 0)    AS prevented_match_id,
+    toDecimal64(ifNull(prevented_quantity, '0'), 8)    AS prevented_quantity,
+    ifNull(strategy_id, 0)           AS strategy_id,
+    ifNull(strategy_type, 0)         AS strategy_type,
+    ifNull(fills, '')                AS fills,
+    parseDateTimeBestEffort(ifNull(sent_at, ''))       AS sent_at,
+    if(transact_at IS NULL, NULL, parseDateTimeBestEffort(transact_at)) AS transact_at,
+    ifNull(transact_time, 0)         AS transact_time,
+    parseDateTimeBestEffort(ifNull(recorded_at, ''))   AS recorded_at
+FROM binance_spot_trade_queue;
+```
+
+#### 与合约交易的差异
+
+| 功能 | 现货 WebSocket 交易 | U 本位合约 WebSocket 交易 |
+|------|---------------------|--------------------------|
+| WebSocket 端点 | `wss://ws-api.binance.com:443/ws-api/v3` | `wss://fstream.binance.com/ws` |
+| 下单方法 | `order.place` | `order.place` |
+| 修改订单 | ❌ 不支持（使用 cancelReplace） | ✅ `order.modify` |
+| 持仓方向 | ❌ 无 `positionSide` | ✅ `LONG` / `SHORT` / `BOTH` |
+| 成交时间字段 | `transactTime` | `updateTime` |
+| 金额下单 | ✅ `quoteOrderQty` | ❌ 仅数量下单 |
+| 订单类型 | 7 种 | 10+ 种（含追踪止损等） |
+
+---
 
 添加新的 API 模块非常简单，只需 3 步:
 

@@ -2,6 +2,7 @@
 
 from .coin_mark_price_stream import MarkPriceStream, MarkPriceStreamWriter
 from .futures_trade_ws import FuturesTradeWsClient
+from .spot_trade_ws import SpotTradeWsClient
 from .usdt_mark_price_stream import UsdtMarkPriceStream, UsdtMarkPriceStreamWriter
 
 __all__ = [
@@ -10,4 +11,5 @@ __all__ = [
     "UsdtMarkPriceStream",
     "UsdtMarkPriceStreamWriter",
     "FuturesTradeWsClient",
+    "SpotTradeWsClient",
 ]

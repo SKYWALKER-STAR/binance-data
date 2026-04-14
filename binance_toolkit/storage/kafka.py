@@ -343,6 +343,136 @@ class KafkaStorage:
         logger.debug("发布 [%s] 交易结果到 Topic [%s]: orderId=%s status=%s",
                      action, topic, record["order_id"], record["status"])
 
+    def write_spot_trade(
+        self,
+        result: dict[str, Any],
+        *,
+        action: str,
+        sent_at: datetime,
+        transact_at: "datetime | None",
+        topic: str = "binance.trade.spot",
+    ) -> None:
+        """发布单笔现货交易结果到 Kafka Topic.
+
+        每条消息以 ``symbol`` 作为 Key，包含完整的订单快照及时间戳。
+
+        Args:
+            result:      Binance WebSocket API 返回的 ``result`` 字典。
+            action:      操作类型，``"new_order"`` / ``"cancel_order"`` /
+                         ``"query_order"`` / ``"cancel_all_orders"``。
+            sent_at:     交易发起时间（本地记录的 UTC datetime）。
+            transact_at: 交易成交/更新时间（来自响应 transactTime，可为 None）。
+            topic:       目标 Kafka Topic，默认 ``"binance.trade.spot"``。
+        """
+        symbol: str = result.get("symbol", "UNKNOWN")
+
+        # 处理成交明细 fills（如有）
+        fills: list[dict] = result.get("fills", [])
+        fills_json: str | None = None
+        if fills:
+            import json
+            fills_json = json.dumps(fills, ensure_ascii=False)
+
+        record: dict[str, Any] = {
+            "action":                     action,
+            "order_id":                   result.get("orderId"),
+            "order_list_id":              result.get("orderListId"),
+            "client_order_id":            result.get("clientOrderId"),
+            "orig_client_order_id":       result.get("origClientOrderId"),
+            "symbol":                     symbol,
+            "side":                       result.get("side"),
+            "type":                       result.get("type"),
+            "time_in_force":              result.get("timeInForce"),
+            "quantity":                   result.get("origQty"),
+            "quote_order_qty":            result.get("origQuoteOrderQty"),
+            "price":                      result.get("price"),
+            "stop_price":                 result.get("stopPrice"),
+            "trailing_delta":             result.get("trailingDelta"),
+            "trailing_time":              result.get("trailingTime"),
+            "iceberg_qty":                result.get("icebergQty"),
+            "executed_qty":               result.get("executedQty"),
+            "cummulative_quote_qty":      result.get("cummulativeQuoteQty"),
+            "status":                     result.get("status"),
+            "working_time":               result.get("workingTime"),
+            "self_trade_prevention_mode": result.get("selfTradePreventionMode"),
+            "prevented_match_id":         result.get("preventedMatchId"),
+            "prevented_quantity":         result.get("preventedQuantity"),
+            "strategy_id":                result.get("strategyId"),
+            "strategy_type":              result.get("strategyType"),
+            "fills":                      fills_json,
+            # 时间字段
+            "sent_at":       sent_at.isoformat(),
+            "transact_at":   transact_at.isoformat() if transact_at else None,
+            "transact_time": result.get("transactTime") or result.get("time"),
+            "recorded_at":   datetime.now(timezone.utc).isoformat(),
+        }
+        self._producer.send(topic, key=symbol, value=record)
+        self._producer.flush()
+        logger.debug("发布 [%s] 现货交易结果到 Topic [%s]: orderId=%s status=%s",
+                     action, topic, record["order_id"], record["status"])
+
+    def write_futures_position(
+        self,
+        positions: list[dict[str, Any]],
+        *,
+        queried_at: datetime,
+        topic: str = "binance.position.usdt_futures",
+    ) -> None:
+        """发布 U 本位合约持仓信息到 Kafka Topic.
+
+        每条消息以 ``symbol:positionSide`` 作为 Key，包含完整的持仓快照。
+
+        Args:
+            positions: Binance WebSocket API 返回的持仓信息列表（仅有效持仓）。
+            queried_at: 查询发起时间（本地记录的 UTC datetime）。
+            topic:     目标 Kafka Topic，默认 ``"binance.position.usdt_futures"``。
+        """
+        if not positions:
+            return
+
+        for pos in positions:
+            symbol: str = pos.get("symbol", "UNKNOWN")
+            position_side: str = pos.get("positionSide", "BOTH")
+
+            # 计算更新时间
+            update_time_ms: int | None = pos.get("updateTime")
+            updated_at: datetime | None = None
+            if update_time_ms:
+                updated_at = datetime.fromtimestamp(update_time_ms / 1000, tz=timezone.utc)
+
+            record: dict[str, Any] = {
+                "symbol":                  symbol,
+                "position_side":           position_side,
+                "position_amt":            pos.get("positionAmt"),
+                "entry_price":             pos.get("entryPrice"),
+                "break_even_price":        pos.get("breakEvenPrice"),
+                "mark_price":              pos.get("markPrice"),
+                "unrealized_profit":       pos.get("unRealizedProfit"),
+                "liquidation_price":       pos.get("liquidationPrice"),
+                "isolated_margin":         pos.get("isolatedMargin"),
+                "notional":                pos.get("notional"),
+                "margin_asset":            pos.get("marginAsset"),
+                "isolated_wallet":         pos.get("isolatedWallet"),
+                "initial_margin":          pos.get("initialMargin"),
+                "maint_margin":            pos.get("maintMargin"),
+                "position_initial_margin": pos.get("positionInitialMargin"),
+                "open_order_initial_margin": pos.get("openOrderInitialMargin"),
+                "adl":                     pos.get("adl"),
+                "bid_notional":            pos.get("bidNotional"),
+                "ask_notional":            pos.get("askNotional"),
+                # 时间字段
+                "update_time":             update_time_ms,
+                "updated_at":              updated_at.isoformat() if updated_at else None,
+                "queried_at":              queried_at.isoformat(),
+                "recorded_at":             datetime.now(timezone.utc).isoformat(),
+            }
+
+            key = f"{symbol}:{position_side}"
+            self._producer.send(topic, key=key, value=record)
+
+        self._producer.flush()
+        logger.debug("发布 %d 条持仓信息到 Topic [%s]", len(positions), topic)
+
     def close(self) -> None:
         self._producer.close()
         logger.info("Kafka Producer 已关闭")

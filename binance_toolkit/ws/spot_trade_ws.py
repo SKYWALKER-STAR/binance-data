@@ -1,22 +1,19 @@
-"""U 本位合约 WebSocket 交易 API.
+"""现货 WebSocket 交易 API.
 
-通过持久 WebSocket 连接与 Binance U 本位合约交易服务交互，支持:
+通过持久 WebSocket 连接与 Binance 现货交易服务交互，支持:
   - 下单         (order.place)
-  - 修改订单     (order.modify)
   - 撤销订单     (order.cancel)
   - 查询订单     (order.status)
-  - 查询持仓     (v2/account.position)
+  - 撤销全部订单 (openOrders.cancelAll)
 
 每笔交易结果记录:
-  - sent_at    : 交易发起时间 (发送请求的本地 UTC 时间)
-  - filled_at  : 交易成交/更新时间 (来自响应中的 updateTime 字段)
+  - sent_at       : 交易发起时间 (发送请求的本地 UTC 时间)
+  - transact_at   : 交易成交/更新时间 (来自响应中的 transactTime 字段)
 
-交易结果通过 Kafka Topic ``binance.trade.usdt_futures`` 写入数据库。
-持仓信息通过 Kafka Topic ``binance.position.usdt_futures`` 写入数据库。
+交易结果通过 Kafka Topic ``binance.trade.spot`` 写入数据库。
 
 文档参考:
-  https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/websocket-api
-  https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/websocket-api/Position-Info-V2
+  https://developers.binance.com/docs/binance-spot-api-docs/websocket-api/trading-requests
 """
 
 from __future__ import annotations
@@ -40,7 +37,7 @@ if TYPE_CHECKING:
     from ..config import BinanceConfig
     from ..storage.kafka import KafkaStorage
 
-logger = logging.getLogger("binance_toolkit.ws.futures_trade")
+logger = logging.getLogger("binance_toolkit.ws.spot_trade")
 
 
 # 请求超时秒数
@@ -50,28 +47,28 @@ _DEFAULT_TIMEOUT = 10
 _MAX_RECONNECT_WAIT = 60
 
 
-class FuturesTradeWsClient:
-    """U 本位合约 WebSocket 交易客户端.
+class SpotTradeWsClient:
+    """现货 WebSocket 交易客户端.
 
-    维护一条持久 WebSocket 连接，以请求/响应方式调用 Binance U 本位
-    合约交易 WebSocket API。每笔操作的结果（含发起时间和成交时间）
+    维护一条持久 WebSocket 连接，以请求/响应方式调用 Binance 现货
+    交易 WebSocket API。每笔操作的结果（含发起时间和成交时间）
     均会写入 Kafka。
 
     用法::
 
         from binance_toolkit.config import BinanceConfig
         from binance_toolkit.storage.kafka import KafkaStorage
-        from binance_toolkit.ws.futures_trade_ws import FuturesTradeWsClient
+        from binance_toolkit.ws.spot_trade_ws import SpotTradeWsClient
 
         config = BinanceConfig.from_env()
         kafka = KafkaStorage(config)
 
-        with FuturesTradeWsClient(config, kafka_storage=kafka) as client:
+        with SpotTradeWsClient(config, kafka_storage=kafka) as client:
             result = client.new_order(
                 symbol="BTCUSDT",
                 side="BUY",
                 order_type="LIMIT",
-                quantity="0.01",
+                quantity="0.001",
                 price="60000",
                 time_in_force="GTC",
             )
@@ -83,14 +80,14 @@ class FuturesTradeWsClient:
         config: "BinanceConfig",
         *,
         kafka_storage: Optional["KafkaStorage"] = None,
-        kafka_topic: str = "binance.trade.usdt_futures",
+        kafka_topic: str = "binance.trade.spot",
         request_timeout: int = _DEFAULT_TIMEOUT,
     ):
         """
         Args:
             config:          Binance 配置（需要 api_key + secret_key 或 private_key）。
             kafka_storage:   Kafka 存储实例，传入时自动写入交易结果。
-            kafka_topic:     目标 Kafka Topic，默认 ``binance.trade.usdt_futures``。
+            kafka_topic:     目标 Kafka Topic，默认 ``binance.trade.spot``。
             request_timeout: 单次请求等待超时秒数，默认 10 秒。
         """
         self._config = config
@@ -98,10 +95,10 @@ class FuturesTradeWsClient:
         self._kafka_topic = kafka_topic
         self._timeout = request_timeout
 
-        self._ws_url: str = config.fapi_ws_url
+        self._ws_url: str = config.spot_ws_url
         self._signer: Optional["BaseSigner"] = create_signer(config)
         if self._signer is None:
-            raise BinanceAuthError("FuturesTradeWsClient 需要签名配置 (secret_key 或 private_key_path)")
+            raise BinanceAuthError("SpotTradeWsClient 需要签名配置 (secret_key 或 private_key_path)")
 
         self._ws: Optional[websocket.WebSocket] = None
         self._lock = threading.Lock()                     # 保护 ws 写操作
@@ -123,22 +120,18 @@ class FuturesTradeWsClient:
         side: str,
         order_type: str,
         *,
-        position_side: str | None = None,
         time_in_force: str | None = None,
         quantity: str | None = None,
+        quote_order_qty: str | None = None,
         price: str | None = None,
-        stop_price: str | None = None,
-        close_position: str | None = None,
-        reduce_only: str | None = None,
         new_client_order_id: str | None = None,
-        activation_price: str | None = None,
-        callback_rate: str | None = None,
-        working_type: str | None = None,
-        price_protect: str | None = None,
         new_order_resp_type: str | None = None,
-        price_match: str | None = None,
+        stop_price: str | None = None,
+        trailing_delta: int | None = None,
+        iceberg_qty: str | None = None,
+        strategy_id: int | None = None,
+        strategy_type: int | None = None,
         self_trade_prevention_mode: str | None = None,
-        good_till_date: int | None = None,
         **kwargs: Any,
     ) -> dict:
         """下单.
@@ -147,93 +140,45 @@ class FuturesTradeWsClient:
             symbol:                     交易对，如 ``"BTCUSDT"``。
             side:                       方向，``"BUY"`` 或 ``"SELL"``。
             order_type:                 订单类型，``"LIMIT"`` / ``"MARKET"`` /
-                                        ``"STOP"`` / ``"STOP_MARKET"`` /
-                                        ``"TAKE_PROFIT"`` / ``"TAKE_PROFIT_MARKET"`` /
-                                        ``"TRAILING_STOP_MARKET"``。
-            position_side:              仓位方向，单向 ``"BOTH"``；双向 ``"LONG"`` / ``"SHORT"``。
+                                        ``"LIMIT_MAKER"`` / ``"STOP_LOSS"`` /
+                                        ``"STOP_LOSS_LIMIT"`` / ``"TAKE_PROFIT"`` /
+                                        ``"TAKE_PROFIT_LIMIT"``。
             time_in_force:              有效方式，``"GTC"`` / ``"IOC"`` / ``"FOK"``。
-            quantity:                   下单数量。
+            quantity:                   下单数量（基础货币）。
+            quote_order_qty:            下单金额（报价货币，仅 MARKET 订单）。
             price:                      限价价格。
-            stop_price:                 止损 / 止盈触发价。
-            close_position:             是否全平，``"true"`` / ``"false"``（仅与
-                                        ``STOP_MARKET``/``TAKE_PROFIT_MARKET`` 配合使用）。
-            reduce_only:                是否只减仓，``"true"`` / ``"false"``。
             new_client_order_id:        自定义订单 ID。
-            activation_price:           追踪止损激活价格。
-            callback_rate:              追踪止损回调幅度 (0.1–10)。
-            working_type:               触发价格类型，``"MARK_PRICE"`` 或 ``"CONTRACT_PRICE"``。
-            price_protect:              触发保护，``"TRUE"`` / ``"FALSE"``。
-            new_order_resp_type:        响应类型，``"ACK"`` 或 ``"RESULT"``。
-            price_match:                价格撮合类型（仅 LIMIT/STOP/TAKE_PROFIT）。
+            new_order_resp_type:        响应类型，``"ACK"`` / ``"RESULT"`` / ``"FULL"``。
+            stop_price:                 止损 / 止盈触发价。
+            trailing_delta:             追踪止损 delta（BIPS）。
+            iceberg_qty:                冰山订单显示数量。
+            strategy_id:                策略 ID。
+            strategy_type:              策略类型。
             self_trade_prevention_mode: 自成交保护模式。
-            good_till_date:             GTD 有效截止时间戳（毫秒，仅 timeInForce=GTD）。
             **kwargs:                   其他可选参数透传。
 
         Returns:
-            Binance 响应 result 字典，包含 orderId、status、avgPrice 等。
+            Binance 响应 result 字典，包含 orderId、status、executedQty 等。
         """
         params: dict[str, Any] = {
             "symbol": symbol,
             "side": side,
             "type": order_type,
         }
-        _maybe(params, "positionSide", position_side)
         _maybe(params, "timeInForce", time_in_force)
         _maybe(params, "quantity", quantity)
+        _maybe(params, "quoteOrderQty", quote_order_qty)
         _maybe(params, "price", price)
-        _maybe(params, "stopPrice", stop_price)
-        _maybe(params, "closePosition", close_position)
-        _maybe(params, "reduceOnly", reduce_only)
         _maybe(params, "newClientOrderId", new_client_order_id)
-        _maybe(params, "activationPrice", activation_price)
-        _maybe(params, "callbackRate", callback_rate)
-        _maybe(params, "workingType", working_type)
-        _maybe(params, "priceProtect", price_protect)
         _maybe(params, "newOrderRespType", new_order_resp_type)
-        _maybe(params, "priceMatch", price_match)
+        _maybe(params, "stopPrice", stop_price)
+        _maybe(params, "trailingDelta", trailing_delta)
+        _maybe(params, "icebergQty", iceberg_qty)
+        _maybe(params, "strategyId", strategy_id)
+        _maybe(params, "strategyType", strategy_type)
         _maybe(params, "selfTradePreventionMode", self_trade_prevention_mode)
-        _maybe(params, "goodTillDate", good_till_date)
         params.update(kwargs)
         return self._request("order.place", params, action="new_order")
-
-    def modify_order(
-        self,
-        symbol: str,
-        side: str,
-        quantity: str,
-        price: str,
-        *,
-        order_id: int | None = None,
-        orig_client_order_id: str | None = None,
-        price_match: str | None = None,
-        **kwargs: Any,
-    ) -> dict:
-        """修改订单（仅支持 LIMIT 订单）.
-
-        Args:
-            symbol:                交易对。
-            side:                  方向，``"BUY"`` 或 ``"SELL"``。
-            quantity:              新数量。
-            price:                 新价格。
-            order_id:              订单 ID（与 orig_client_order_id 二选一）。
-            orig_client_order_id:  自定义订单 ID（与 order_id 二选一）。
-            price_match:           价格撮合类型（不能与 price 同时传入）。
-            **kwargs:              其他可选参数透传。
-
-        Returns:
-            Binance 响应 result 字典。
-        """
-        params: dict[str, Any] = {
-            "symbol": symbol,
-            "side": side,
-            "quantity": quantity,
-            "price": price,
-        }
-        _maybe(params, "orderId", order_id)
-        _maybe(params, "origClientOrderId", orig_client_order_id)
-        _maybe(params, "priceMatch", price_match)
-        params.update(kwargs)
-        return self._request("order.modify", params, action="modify_order")
 
     def cancel_order(
         self,
@@ -241,6 +186,8 @@ class FuturesTradeWsClient:
         *,
         order_id: int | None = None,
         orig_client_order_id: str | None = None,
+        new_client_order_id: str | None = None,
+        cancel_restrictions: str | None = None,
         **kwargs: Any,
     ) -> dict:
         """撤销订单.
@@ -249,6 +196,8 @@ class FuturesTradeWsClient:
             symbol:                交易对。
             order_id:              订单 ID（与 orig_client_order_id 二选一）。
             orig_client_order_id:  自定义订单 ID（与 order_id 二选一）。
+            new_client_order_id:   撤单后的新订单 ID（可选）。
+            cancel_restrictions:   取消限制，``"ONLY_NEW"`` / ``"ONLY_PARTIALLY_FILLED"``。
             **kwargs:              其他可选参数透传。
 
         Returns:
@@ -257,6 +206,8 @@ class FuturesTradeWsClient:
         params: dict[str, Any] = {"symbol": symbol}
         _maybe(params, "orderId", order_id)
         _maybe(params, "origClientOrderId", orig_client_order_id)
+        _maybe(params, "newClientOrderId", new_client_order_id)
+        _maybe(params, "cancelRestrictions", cancel_restrictions)
         params.update(kwargs)
         return self._request("order.cancel", params, action="cancel_order")
 
@@ -285,49 +236,23 @@ class FuturesTradeWsClient:
         params.update(kwargs)
         return self._request("order.status", params, action="query_order")
 
-    def query_position(
+    def cancel_all_orders(
         self,
-        symbol: str | None = None,
+        symbol: str,
         **kwargs: Any,
     ) -> list[dict]:
-        """查询持仓信息 (Position Information V2).
-
-        获取当前持仓信息，仅返回有持仓或有挂单的交易对。
+        """撤销指定交易对的所有挂单.
 
         Args:
-            symbol:   交易对，如 ``"BTCUSDT"``。可选，不传则返回所有持仓。
+            symbol:   交易对。
             **kwargs: 其他可选参数透传。
 
         Returns:
-            Binance 响应 result 列表，每个元素为一个持仓信息字典，包含:
-              - symbol:              交易对
-              - positionSide:        持仓方向 (BOTH/LONG/SHORT)
-              - positionAmt:         持仓数量
-              - entryPrice:          开仓均价
-              - breakEvenPrice:      盈亏平衡价
-              - markPrice:           标记价格
-              - unRealizedProfit:    未实现盈亏
-              - liquidationPrice:    强平价格
-              - isolatedMargin:      逐仓保证金
-              - notional:            名义价值
-              - marginAsset:         保证金资产
-              - isolatedWallet:      逐仓钱包余额
-              - initialMargin:       初始保证金
-              - maintMargin:         维持保证金
-              - positionInitialMargin: 持仓初始保证金
-              - openOrderInitialMargin: 挂单初始保证金
-              - adl:                 自动减仓队列
-              - bidNotional:         买单名义价值
-              - askNotional:         卖单名义价值
-              - updateTime:          更新时间戳 (毫秒)
-
-        文档参考:
-          https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/websocket-api/Position-Info-V2
+            Binance 响应 result 列表，包含所有被撤销订单的信息。
         """
-        params: dict[str, Any] = {}
-        _maybe(params, "symbol", symbol)
+        params: dict[str, Any] = {"symbol": symbol}
         params.update(kwargs)
-        return self._request_position("v2/account.position", params)
+        return self._request_list("openOrders.cancelAll", params, action="cancel_all_orders")
 
     # ------------------------------------------------------------------
     # 连接管理
@@ -343,9 +268,9 @@ class FuturesTradeWsClient:
                 pass
         if self._recv_thread and self._recv_thread.is_alive():
             self._recv_thread.join(timeout=5)
-        logger.info("FuturesTradeWsClient 已关闭")
+        logger.info("SpotTradeWsClient 已关闭")
 
-    def __enter__(self) -> "FuturesTradeWsClient":
+    def __enter__(self) -> "SpotTradeWsClient":
         return self
 
     def __exit__(self, *args: Any) -> None:
@@ -364,12 +289,12 @@ class FuturesTradeWsClient:
                 ws = websocket.create_connection(self._ws_url, timeout=self._timeout)
                 self._ws = ws
                 self._connected.set()
-                logger.info("已连接 Binance U 本位合约 WebSocket: %s", self._ws_url)
+                logger.info("已连接 Binance 现货 WebSocket: %s", self._ws_url)
                 # 启动后台接收线程
                 self._recv_thread = threading.Thread(
                     target=self._recv_loop,
                     daemon=True,
-                    name="futures-trade-ws-recv",
+                    name="spot-trade-ws-recv",
                 )
                 self._recv_thread.start()
                 return
@@ -475,47 +400,44 @@ class FuturesTradeWsClient:
 
         result: dict = response["result"]
 
-        # 计算成交/更新时间
-        update_time_ms: int | None = result.get("updateTime") or result.get("time")
-        filled_at: datetime | None = None
-        if update_time_ms:
-            filled_at = datetime.fromtimestamp(update_time_ms / 1000, tz=timezone.utc)
+        # 计算成交/更新时间 (现货使用 transactTime 或 time)
+        transact_time_ms: int | None = result.get("transactTime") or result.get("time")
+        transact_at: datetime | None = None
+        if transact_time_ms:
+            transact_at = datetime.fromtimestamp(transact_time_ms / 1000, tz=timezone.utc)
 
         logger.info(
-            "[%s] symbol=%s orderId=%s status=%s sent_at=%s filled_at=%s",
+            "[%s] symbol=%s orderId=%s status=%s sent_at=%s transact_at=%s",
             action,
             result.get("symbol", ""),
             result.get("orderId", ""),
             result.get("status", ""),
             sent_at.isoformat(),
-            filled_at.isoformat() if filled_at else "N/A",
+            transact_at.isoformat() if transact_at else "N/A",
         )
 
         # 写入 Kafka
         if self._kafka is not None:
-            self._kafka.write_futures_trade(
+            self._kafka.write_spot_trade(
                 result,
                 action=action,
                 sent_at=sent_at,
-                filled_at=filled_at,
+                transact_at=transact_at,
                 topic=self._kafka_topic,
             )
 
         return result
 
-    def _request_position(
-        self,
-        method: str,
-        params: dict[str, Any],
-    ) -> list[dict]:
-        """发送持仓查询请求并等待响应.
+    def _request_list(self, method: str, params: dict[str, Any], *, action: str) -> list[dict]:
+        """发送 WebSocket 请求并等待响应（返回列表）.
 
         Args:
-            method:  WebSocket API 方法名，如 ``"v2/account.position"``。
+            method:  WebSocket API 方法名，如 ``"openOrders.cancelAll"``。
             params:  请求参数（不含签名）。
+            action:  操作名称，用于日志和 Kafka 消息标记。
 
         Returns:
-            Binance 响应的 ``result`` 列表（持仓信息数组）。
+            Binance 响应的 ``result`` 列表。
 
         Raises:
             BinanceAPIError:    Binance 业务级错误。
@@ -532,8 +454,8 @@ class FuturesTradeWsClient:
         pending = _PendingRequest()
         self._pending[req_id] = pending
 
-        # 记录查询发起时间
-        queried_at = datetime.now(timezone.utc)
+        # 记录交易发起时间
+        sent_at = datetime.now(timezone.utc)
 
         try:
             with self._lock:
@@ -558,28 +480,31 @@ class FuturesTradeWsClient:
                 response=response,
             )
 
-        result: list[dict] = response["result"]
-
-        # 过滤有效持仓 (positionAmt != 0)
-        active_positions = [
-            pos for pos in result
-            if float(pos.get("positionAmt", 0)) != 0
-        ]
+        result: list = response["result"]
 
         logger.info(
-            "[query_position] 查询到 %d 个持仓 (总 %d 条), queried_at=%s",
-            len(active_positions),
+            "[%s] 共 %d 条记录, sent_at=%s",
+            action,
             len(result),
-            queried_at.isoformat(),
+            sent_at.isoformat(),
         )
 
-        # 写入 Kafka (仅有效持仓)
-        if self._kafka is not None and active_positions:
-            self._kafka.write_futures_position(
-                active_positions,
-                queried_at=queried_at,
-                topic=self._kafka_topic.replace(".trade.", ".position."),
-            )
+        # 写入 Kafka（逐条写入）
+        if self._kafka is not None:
+            for item in result:
+                # 处理订单和订单列表两种格式
+                if "orderId" in item:
+                    transact_time_ms = item.get("transactTime")
+                    transact_at = None
+                    if transact_time_ms:
+                        transact_at = datetime.fromtimestamp(transact_time_ms / 1000, tz=timezone.utc)
+                    self._kafka.write_spot_trade(
+                        item,
+                        action=action,
+                        sent_at=sent_at,
+                        transact_at=transact_at,
+                        topic=self._kafka_topic,
+                    )
 
         return result
 

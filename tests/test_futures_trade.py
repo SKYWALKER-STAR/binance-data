@@ -43,10 +43,11 @@ from binance_toolkit.ws.futures_trade_ws import FuturesTradeWsClient
 # 测试参数（按需修改）
 # ─────────────────────────────────────────
 SYMBOL = "BTCUSDT"
-SIDE = "BUY"
+SIDE = "SELL"
+POSITION_SIDE="SHORT"
 ORDER_TYPE = "LIMIT"
-QUANTITY = "0.001"       # 最小下单量
-PRICE = "10000"          # 远低于市价，不会成交
+QUANTITY = "0.005"       # 最小下单量
+PRICE = "74293"          # 远低于市价，不会成交
 MODIFY_PRICE = "10100"   # 修改后的价格
 TIME_IN_FORCE = "GTC"
 # ─────────────────────────────────────────
@@ -92,17 +93,21 @@ def run_test() -> None:
         ) as client:
 
             # ── Step 1: 下限价单 ────────────────────────────
+            '''
             _separator("Step 1: 下限价单")
             order = client.new_order(
                 symbol=SYMBOL,
                 side=SIDE,
+                position_side=POSITION_SIDE,
                 order_type=ORDER_TYPE,
                 quantity=QUANTITY,
                 price=PRICE,
                 time_in_force=TIME_IN_FORCE,
             )
             _print_order("new_order", order)
-            order_id = order["orderId"]
+            #order_id = order["orderId"]
+            '''
+            order_id = "13034571202"
 
             # ── Step 2: 查询订单 ────────────────────────────
             _separator("Step 2: 查询订单")
@@ -110,6 +115,7 @@ def run_test() -> None:
             _print_order("query_order", status)
 
             # ── Step 3: 修改订单价格 ─────────────────────────
+            '''
             _separator("Step 3: 修改订单价格")
             modified = client.modify_order(
                 symbol=SYMBOL,
@@ -119,17 +125,24 @@ def run_test() -> None:
                 order_id=order_id,
             )
             _print_order("modify_order", modified)
+            '''
 
             # ── Step 4: 再次查询确认修改 ─────────────────────
+            '''
             _separator("Step 4: 再次查询确认修改")
             status2 = client.query_order(symbol=SYMBOL, order_id=order_id)
             _print_order("query_order", status2)
+            '''
 
             # ── Step 5: 撤销订单 ────────────────────────────
+            '''
             _separator("Step 5: 撤销订单")
             cancel = client.cancel_order(symbol=SYMBOL, order_id=order_id)
             _print_order("cancel_order", cancel)
             order_id = None  # 已撤销，无需再次清理
+            '''
+            # ── Step 6: 查询所有持仓信息 ────────────────────────────
+            all_positions = client.query_position()
 
     except BinanceAPIError as exc:
         logger.error("Binance API 错误: code=%s  msg=%s", exc.error_code, exc)
