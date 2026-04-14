@@ -285,6 +285,64 @@ class KafkaStorage:
         self._producer.flush()
         logger.debug("发布 %d 条账户快照行到 Topic 前缀 [%s]", total, topic_prefix)
 
+    def write_futures_trade(
+        self,
+        result: dict[str, Any],
+        *,
+        action: str,
+        sent_at: datetime,
+        filled_at: "datetime | None",
+        topic: str = "binance.trade.usdt_futures",
+    ) -> None:
+        """发布单笔 U 本位合约交易结果到 Kafka Topic.
+
+        每条消息以 ``symbol`` 作为 Key，包含完整的订单快照及时间戳。
+
+        Args:
+            result:    Binance WebSocket API 返回的 ``result`` 字典。
+            action:    操作类型，``"new_order"`` / ``"modify_order"`` /
+                       ``"cancel_order"`` / ``"query_order"``。
+            sent_at:   交易发起时间（本地记录的 UTC datetime）。
+            filled_at: 交易成交/更新时间（来自响应 updateTime，可为 None）。
+            topic:     目标 Kafka Topic，默认 ``"binance.trade.usdt_futures"``。
+        """
+        symbol: str = result.get("symbol", "UNKNOWN")
+        record: dict[str, Any] = {
+            "action":                     action,
+            "order_id":                   result.get("orderId"),
+            "client_order_id":            result.get("clientOrderId"),
+            "symbol":                     symbol,
+            "side":                       result.get("side"),
+            "position_side":              result.get("positionSide"),
+            "type":                       result.get("type") or result.get("origType"),
+            "time_in_force":              result.get("timeInForce"),
+            "quantity":                   result.get("origQty"),
+            "price":                      result.get("price"),
+            "avg_price":                  result.get("avgPrice"),
+            "stop_price":                 result.get("stopPrice"),
+            "executed_qty":               result.get("executedQty"),
+            "cum_quote":                  result.get("cumQuote"),
+            "status":                     result.get("status"),
+            "reduce_only":                result.get("reduceOnly"),
+            "close_position":             result.get("closePosition"),
+            "working_type":               result.get("workingType"),
+            "price_protect":              result.get("priceProtect"),
+            "price_match":                result.get("priceMatch"),
+            "self_trade_prevention_mode": result.get("selfTradePreventionMode"),
+            "good_till_date":             result.get("goodTillDate"),
+            "activate_price":             result.get("activatePrice"),
+            "price_rate":                 result.get("priceRate"),
+            # 时间字段
+            "sent_at":     sent_at.isoformat(),
+            "filled_at":   filled_at.isoformat() if filled_at else None,
+            "update_time": result.get("updateTime") or result.get("time"),
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._producer.send(topic, key=symbol, value=record)
+        self._producer.flush()
+        logger.debug("发布 [%s] 交易结果到 Topic [%s]: orderId=%s status=%s",
+                     action, topic, record["order_id"], record["status"])
+
     def close(self) -> None:
         self._producer.close()
         logger.info("Kafka Producer 已关闭")

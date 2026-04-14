@@ -23,7 +23,8 @@ biannce-api/
 │       └── account.py        # 账户信息 (需要签名)
 │   ├── ws/                   # WebSocket 模块
 │   │   ├── coin_mark_price_stream.py  # 币本位合约标记价格实时流
-│   │   └── usdt_mark_price_stream.py  # U本位合约标记价格实时流
+│   │   ├── usdt_mark_price_stream.py  # U本位合约标记价格实时流
+│   │   └── futures_trade_ws.py        # U本位合约 WebSocket 交易客户端
 │   ├── collector/            # 数据采集器
 │   │   ├── price_collector.py        # 现货价格定时采集常驻进程
 │   │   └── mark_price_collector.py   # 币本位合约标记/指数价格采集进程
@@ -290,7 +291,8 @@ pip install 'binance-toolkit[kafka]'
 {
   "kafka_bootstrap_servers": "localhost:9092",
   "kafka_topic_coin": "binance.mark_price.coin",
-  "kafka_topic_usdt": "binance.mark_price.usdt"
+  "kafka_topic_usdt": "binance.mark_price.usdt",
+  "kafka_topic_futures_trade": "binance.trade.usdt_futures"
 }
 ```
 
@@ -300,6 +302,7 @@ pip install 'binance-toolkit[kafka]'
 export KAFKA_BOOTSTRAP_SERVERS=localhost:9092
 export KAFKA_TOPIC_COIN=binance.mark_price.coin
 export KAFKA_TOPIC_USDT=binance.mark_price.usdt
+export KAFKA_TOPIC_FUTURES_TRADE=binance.trade.usdt_futures
 ```
 
 Kafka 消息格式 (每条消息 Key=symbol, Value=JSON)：
@@ -916,9 +919,277 @@ with BinanceToolkit(config) as tk:
         quantity="0.001",
         price="30000",
     )
+
+### 13. U 本位合约 WebSocket 交易
+
+通过持久 WebSocket 连接（`wss://fstream.binance.com/ws`）调用 Binance U 本位合约交易 API，
+支持下单、修改订单、撤销订单和查询订单。每笔交易结果自动记录**交易发起时间**和**成交/更新时间**，
+并写入 Kafka Topic，再由 Kafka 流入 ClickHouse 等数据库。
+
+**前置条件：** 需要配置 API Key + Secret Key（或 Ed25519 私钥），并安装 Kafka 依赖。
+
+```bash
+pip install 'binance-toolkit[kafka]'
 ```
 
-## 扩展指南
+#### Kafka Topic 设计
+
+| Topic | 说明 |
+|-------|------|
+| `binance.trade.usdt_futures` | U 本位合约每笔交易操作结果（下单 / 改单 / 撤单 / 查单） |
+
+#### 消息格式（每条消息 Key=symbol, Value=JSON）
+
+```json
+{
+  "action":                     "new_order",
+  "order_id":                   325078477,
+  "client_order_id":            "iCXL1BywlBaf2sesNUrVl3",
+  "symbol":                     "BTCUSDT",
+  "side":                       "BUY",
+  "position_side":              "BOTH",
+  "type":                       "LIMIT",
+  "time_in_force":              "GTC",
+  "quantity":                   "0.100",
+  "price":                      "43187.00",
+  "avg_price":                  "0.00",
+  "stop_price":                 "0.00",
+  "executed_qty":               "0.000",
+  "cum_quote":                  "0.00000",
+  "status":                     "NEW",
+  "reduce_only":                false,
+  "close_position":             false,
+  "working_type":               "CONTRACT_PRICE",
+  "price_protect":              false,
+  "price_match":                "NONE",
+  "self_trade_prevention_mode": "NONE",
+  "good_till_date":             0,
+  "sent_at":                    "2026-04-14T08:00:00.123456+00:00",
+  "filled_at":                  "2026-04-14T08:00:00.435000+00:00",
+  "update_time":                1702555534435,
+  "recorded_at":                "2026-04-14T08:00:00.500000+00:00"
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `action` | 操作类型: `new_order` / `modify_order` / `cancel_order` / `query_order` |
+| `sent_at` | **交易发起时间** — 客户端发送请求前记录的本地 UTC 时间（ISO 8601）|
+| `filled_at` | **成交/更新时间** — 来自 Binance 响应中的 `updateTime` 字段（ISO 8601）|
+| `update_time` | Binance 原始 `updateTime` 毫秒时间戳 |
+| `recorded_at` | 写入 Kafka 时的本地 UTC 时间 |
+
+#### 在代码中使用
+
+```python
+from binance_toolkit.config import BinanceConfig
+from binance_toolkit.storage.kafka import KafkaStorage
+from binance_toolkit.ws.futures_trade_ws import FuturesTradeWsClient
+
+config = BinanceConfig.from_env()
+
+# 使用 with 语句自动管理连接
+kafka = KafkaStorage(config)
+with FuturesTradeWsClient(config, kafka_storage=kafka) as client:
+
+    # --- 下单 (LIMIT) ---
+    result = client.new_order(
+        symbol="BTCUSDT",
+        side="BUY",
+        order_type="LIMIT",
+        quantity="0.01",
+        price="60000",
+        time_in_force="GTC",
+    )
+    print("下单:", result["orderId"], result["status"])
+
+    # --- 下单 (MARKET) ---
+    result = client.new_order(
+        symbol="ETHUSDT",
+        side="SELL",
+        order_type="MARKET",
+        quantity="0.1",
+    )
+
+    # --- 双向持仓模式下单 ---
+    result = client.new_order(
+        symbol="BTCUSDT",
+        side="BUY",
+        order_type="LIMIT",
+        quantity="0.01",
+        price="59000",
+        time_in_force="GTC",
+        position_side="LONG",       # 双向持仓模式传入
+    )
+
+    # --- 止损单 ---
+    result = client.new_order(
+        symbol="BTCUSDT",
+        side="SELL",
+        order_type="STOP_MARKET",
+        stop_price="58000",
+        close_position="true",      # 触发时全平
+    )
+
+    # --- 追踪止损单 ---
+    result = client.new_order(
+        symbol="BTCUSDT",
+        side="SELL",
+        order_type="TRAILING_STOP_MARKET",
+        quantity="0.01",
+        callback_rate="1.0",        # 1% 回调幅度
+        activation_price="62000",
+    )
+
+    # --- 修改订单 (仅 LIMIT 订单) ---
+    result = client.modify_order(
+        symbol="BTCUSDT",
+        side="BUY",
+        quantity="0.015",
+        price="59500",
+        order_id=result["orderId"],
+    )
+
+    # --- 撤销订单 ---
+    result = client.cancel_order(
+        symbol="BTCUSDT",
+        order_id=325078477,
+    )
+    print("撤单:", result["status"])   # "CANCELED"
+
+    # --- 查询订单 ---
+    result = client.query_order(
+        symbol="BTCUSDT",
+        order_id=325078477,
+    )
+    print("订单状态:", result["status"])
+
+kafka.close()
+```
+
+#### 配置说明
+
+```json
+{
+  "kafka_bootstrap_servers": "localhost:9092",
+  "kafka_topic_futures_trade": "binance.trade.usdt_futures"
+}
+```
+
+| 环境变量 | 说明 | 默认值 |
+|---------|------|--------|
+| `KAFKA_BOOTSTRAP_SERVERS` | Kafka 地址（逗号分隔） | — |
+| `KAFKA_TOPIC_FUTURES_TRADE` | 交易结果 Topic | `binance.trade.usdt_futures` |
+
+#### `FuturesTradeWsClient` 参数
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `config` | `BinanceConfig` | 含 API Key + 签名密钥的配置（必填）|
+| `kafka_storage` | `KafkaStorage` | Kafka 存储实例，不传则不写 Kafka |
+| `kafka_topic` | `str` | 目标 Topic（默认 `binance.trade.usdt_futures`）|
+| `request_timeout` | `int` | 单次请求超时秒数（默认 `10`）|
+
+#### ClickHouse 建表参考
+
+```sql
+-- Kafka 引擎表（消费 binance.trade.usdt_futures）
+CREATE TABLE binance_futures_trade_queue
+(
+    action                     String,
+    order_id                   Nullable(Int64),
+    client_order_id            Nullable(String),
+    symbol                     String,
+    side                       Nullable(String),
+    position_side              Nullable(String),
+    type                       Nullable(String),
+    time_in_force              Nullable(String),
+    quantity                   Nullable(String),
+    price                      Nullable(String),
+    avg_price                  Nullable(String),
+    stop_price                 Nullable(String),
+    executed_qty               Nullable(String),
+    cum_quote                  Nullable(String),
+    status                     Nullable(String),
+    reduce_only                Nullable(Bool),
+    close_position             Nullable(Bool),
+    working_type               Nullable(String),
+    price_protect              Nullable(Bool),
+    price_match                Nullable(String),
+    self_trade_prevention_mode Nullable(String),
+    good_till_date             Nullable(Int64),
+    activate_price             Nullable(String),
+    price_rate                 Nullable(String),
+    sent_at                    Nullable(String),
+    filled_at                  Nullable(String),
+    update_time                Nullable(Int64),
+    recorded_at                Nullable(String)
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'localhost:9092',
+    kafka_topic_list  = 'binance.trade.usdt_futures',
+    kafka_group_name  = 'clickhouse_futures_trade',
+    kafka_format      = 'JSONEachRow';
+
+-- 持久化表
+CREATE TABLE binance_futures_trade
+(
+    action                     LowCardinality(String),
+    order_id                   Int64,
+    client_order_id            String,
+    symbol                     LowCardinality(String),
+    side                       LowCardinality(String),
+    position_side              LowCardinality(String),
+    type                       LowCardinality(String),
+    time_in_force              LowCardinality(String),
+    quantity                   Decimal(18, 8),
+    price                      Decimal(18, 8),
+    avg_price                  Decimal(18, 8),
+    stop_price                 Decimal(18, 8),
+    executed_qty               Decimal(18, 8),
+    cum_quote                  Decimal(18, 8),
+    status                     LowCardinality(String),
+    reduce_only                Bool,
+    close_position             Bool,
+    working_type               LowCardinality(String),
+    sent_at                    DateTime64(6, 'UTC'),
+    filled_at                  Nullable(DateTime64(6, 'UTC')),
+    update_time                Int64,
+    recorded_at                DateTime64(6, 'UTC')
+)
+ENGINE = MergeTree
+ORDER BY (symbol, order_id, recorded_at);
+
+-- Materialized View（消费队列 → 持久化）
+CREATE MATERIALIZED VIEW binance_futures_trade_mv TO binance_futures_trade AS
+SELECT
+    action,
+    ifNull(order_id, 0)       AS order_id,
+    ifNull(client_order_id,'') AS client_order_id,
+    symbol,
+    ifNull(side,'')            AS side,
+    ifNull(position_side,'')   AS position_side,
+    ifNull(type,'')            AS type,
+    ifNull(time_in_force,'')   AS time_in_force,
+    toDecimal64(ifNull(quantity,'0'), 8)      AS quantity,
+    toDecimal64(ifNull(price,'0'), 8)         AS price,
+    toDecimal64(ifNull(avg_price,'0'), 8)     AS avg_price,
+    toDecimal64(ifNull(stop_price,'0'), 8)    AS stop_price,
+    toDecimal64(ifNull(executed_qty,'0'), 8)  AS executed_qty,
+    toDecimal64(ifNull(cum_quote,'0'), 8)     AS cum_quote,
+    ifNull(status,'')          AS status,
+    ifNull(reduce_only, false) AS reduce_only,
+    ifNull(close_position, false) AS close_position,
+    ifNull(working_type,'')    AS working_type,
+    parseDateTimeBestEffort(ifNull(sent_at,''))     AS sent_at,
+    if(filled_at IS NULL, NULL, parseDateTimeBestEffort(filled_at)) AS filled_at,
+    ifNull(update_time, 0)     AS update_time,
+    parseDateTimeBestEffort(ifNull(recorded_at,'')) AS recorded_at
+FROM binance_futures_trade_queue;
+```
+
+
 
 添加新的 API 模块非常简单，只需 3 步:
 

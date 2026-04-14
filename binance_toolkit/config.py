@@ -38,8 +38,9 @@ class BinanceConfig:
 
     # Kafka (可选, 用于实时数据流)
     kafka_bootstrap_servers: Optional[str] = None  # 逗号分隔, 如 "localhost:9092"
-    kafka_topic_coin: str = "binance.mark_price.coin"  # 币本位合约标记价格 Topic
-    kafka_topic_usdt: str = "binance.mark_price.usdt"  # U本位合约标记价格 Topic
+    kafka_topic_coin: str = "binance.mark_price.coin"    # 币本位合约标记价格 Topic
+    kafka_topic_usdt: str = "binance.mark_price.usdt"    # U本位合约标记价格 Topic
+    kafka_topic_futures_trade: str = "binance.trade.usdt_futures"  # U本位合约交易结果 Topic
 
     # ---------- 工厂方法 ----------
 
@@ -61,8 +62,9 @@ class BinanceConfig:
             INFLUX_MEASUREMENT     (可选, 默认 binance_ticker)
             INFLUX_FUTURES_MEASUREMENT (可选, 默认 binance_futures)
             KAFKA_BOOTSTRAP_SERVERS (可选, Kafka 地址, 逗号分隔)
-            KAFKA_TOPIC_COIN       (可选, 币本位标记价格 Topic, 默认 binance.mark_price.coin)
-            KAFKA_TOPIC_USDT       (可选, U本位标记价格 Topic, 默认 binance.mark_price.usdt)
+            KAFKA_TOPIC_COIN          (可选, 币本位标记价格 Topic, 默认 binance.mark_price.coin)
+            KAFKA_TOPIC_USDT          (可选, U本位标记价格 Topic, 默认 binance.mark_price.usdt)
+            KAFKA_TOPIC_FUTURES_TRADE (可选, U本位合约交易结果 Topic, 默认 binance.trade.usdt_futures)
         """
         api_key = os.environ.get("BINANCE_API_KEY", "")
         if not api_key:
@@ -83,6 +85,7 @@ class BinanceConfig:
             kafka_bootstrap_servers=os.environ.get("KAFKA_BOOTSTRAP_SERVERS"),
             kafka_topic_coin=os.environ.get("KAFKA_TOPIC_COIN", "binance.mark_price.coin"),
             kafka_topic_usdt=os.environ.get("KAFKA_TOPIC_USDT", "binance.mark_price.usdt"),
+            kafka_topic_futures_trade=os.environ.get("KAFKA_TOPIC_FUTURES_TRADE", "binance.trade.usdt_futures"),
         )
 
     @classmethod
@@ -115,4 +118,5 @@ class BinanceConfig:
             kafka_bootstrap_servers=data.get("kafka_bootstrap_servers"),
             kafka_topic_coin=data.get("kafka_topic_coin", "binance.mark_price.coin"),
             kafka_topic_usdt=data.get("kafka_topic_usdt", "binance.mark_price.usdt"),
+            kafka_topic_futures_trade=data.get("kafka_topic_futures_trade", "binance.trade.usdt_futures"),
         )
