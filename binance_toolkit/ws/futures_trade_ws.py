@@ -39,8 +39,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("binance_toolkit.ws.futures_trade")
 
-# U 本位合约 WebSocket API 地址
-FSTREAM_WS_URL = "wss://fstream.binance.com/ws"
 
 # 请求超时秒数
 _DEFAULT_TIMEOUT = 10
@@ -97,6 +95,7 @@ class FuturesTradeWsClient:
         self._kafka_topic = kafka_topic
         self._timeout = request_timeout
 
+        self._ws_url: str = config.fapi_ws_url
         self._signer: Optional["BaseSigner"] = create_signer(config)
         if self._signer is None:
             raise BinanceAuthError("FuturesTradeWsClient 需要签名配置 (secret_key 或 private_key_path)")
@@ -315,10 +314,10 @@ class FuturesTradeWsClient:
         attempt = 0
         while not self._stop_event.is_set():
             try:
-                ws = websocket.create_connection(FSTREAM_WS_URL, timeout=self._timeout)
+                ws = websocket.create_connection(self._ws_url, timeout=self._timeout)
                 self._ws = ws
                 self._connected.set()
-                logger.info("已连接 Binance U 本位合约 WebSocket: %s", FSTREAM_WS_URL)
+                logger.info("已连接 Binance U 本位合约 WebSocket: %s", self._ws_url)
                 # 启动后台接收线程
                 self._recv_thread = threading.Thread(
                     target=self._recv_loop,

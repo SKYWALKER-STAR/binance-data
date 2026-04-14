@@ -14,6 +14,7 @@ from typing import Optional
 
 _DEFAULT_BASE_URL = "https://api.binance.com"
 _DEFAULT_DAPI_BASE_URL = "https://dapi.binance.com"
+_DEFAULT_FAPI_WS_URL = "wss://fstream.binance.com/ws"
 _CONFIG_FILE_NAME = "config.json"
 
 
@@ -24,6 +25,7 @@ class BinanceConfig:
     api_key: str
     base_url: str = _DEFAULT_BASE_URL
     dapi_base_url: str = _DEFAULT_DAPI_BASE_URL
+    fapi_ws_url: str = _DEFAULT_FAPI_WS_URL  # U本位合约 WebSocket 地址
     private_key_path: Optional[str] = None
     private_key_password: Optional[str] = None
     secret_key: Optional[str] = None
@@ -52,6 +54,7 @@ class BinanceConfig:
             BINANCE_API_KEY        (必须)
             BINANCE_BASE_URL       (可选, 默认 https://api.binance.com)
             BINANCE_DAPI_BASE_URL  (可选, 默认 https://dapi.binance.com)
+            BINANCE_FAPI_WS_URL    (可选, 默认 wss://fstream.binance.com/ws)
             BINANCE_PRIVATE_KEY    (可选, Ed25519 私钥路径)
             BINANCE_PRIVATE_KEY_PW (可选, 私钥密码)
             BINANCE_SECRET_KEY     (可选, HMAC 密钥)
@@ -73,6 +76,7 @@ class BinanceConfig:
             api_key=api_key,
             base_url=os.environ.get("BINANCE_BASE_URL", _DEFAULT_BASE_URL),
             dapi_base_url=os.environ.get("BINANCE_DAPI_BASE_URL", _DEFAULT_DAPI_BASE_URL),
+            fapi_ws_url=os.environ.get("BINANCE_FAPI_WS_URL", _DEFAULT_FAPI_WS_URL),
             private_key_path=os.environ.get("BINANCE_PRIVATE_KEY"),
             private_key_password=os.environ.get("BINANCE_PRIVATE_KEY_PW"),
             secret_key=os.environ.get("BINANCE_SECRET_KEY"),
@@ -106,6 +110,7 @@ class BinanceConfig:
             api_key=data["api_key"],
             base_url=data.get("base_url", _DEFAULT_BASE_URL),
             dapi_base_url=data.get("dapi_base_url", _DEFAULT_DAPI_BASE_URL),
+            fapi_ws_url=data.get("fapi_ws_url", _DEFAULT_FAPI_WS_URL),
             private_key_path=data.get("private_key_path"),
             private_key_password=data.get("private_key_password"),
             secret_key=data.get("secret_key"),
