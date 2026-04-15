@@ -47,6 +47,7 @@ class FuturesExecutionAdapter:
                 new_client_order_id=signal.deterministic_client_order_id(),
                 new_order_resp_type="RESULT",
             )
+            log.debug("orderID=%s", result.get("orderId"))
             return ExecutionResult(
                 signal_id=signal.signal_id,
                 status=str(result.get("status", "ACKED")),
