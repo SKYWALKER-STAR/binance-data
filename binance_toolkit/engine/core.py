@@ -19,7 +19,7 @@ from .models import TradingSignal
 from .risk import RiskConfig, RiskGuard
 from .state_store import EngineStateStore, SignalStatus
 
-logger = logging.getLogger("binance_toolkit.engine")
+logger = logging.getLogger("binance_toolkit.engine").setLevel(logging.DEBUG)
 
 _FINAL_MAP = {
     "FILLED": SignalStatus.FILLED,
@@ -126,9 +126,11 @@ class StrategyEngine:
 
         next_reconcile = time.time()
         while not self._stop:
+            logger.debug("engine loop tick cursor_ms=%s", cursor)
             try:
                 cursor = self._poll_once(cursor)
                 if time.time() >= next_reconcile:
+                    logger.debug("reconcile interval reached, starting reconcile")
                     self._reconcile_once()
                     next_reconcile = time.time() + self._engine_cfg.reconcile_interval_sec
             except Exception as exc:
@@ -171,11 +173,14 @@ class StrategyEngine:
         }
 
     def _poll_once(self, cursor: int) -> int:
+        logger.debug("[poll] fetching signals after cursor_ms=%s", cursor)
         self._last_poll_at_ms = int(time.time() * 1000)
         rows = self._source.fetch(after_ts_ms=cursor)
         if not rows:
+            logger.debug("[poll] no new signals")
             return cursor
 
+        logger.debug("[poll] fetched %d signal(s)", len(rows))
         self._metrics["pulled"] += len(rows)
         for signal_item in rows:
             cursor = max(cursor, signal_item.signal_ts_ms)
@@ -184,6 +189,12 @@ class StrategyEngine:
         return cursor
 
     def _process_signal(self, signal_item: TradingSignal) -> None:
+        logger.debug(
+            "[signal] processing signal_id=%s action=%s symbol=%s",
+            signal_item.signal_id,
+            signal_item.action,
+            signal_item.symbol,
+        )
         self._last_signal_at_ms = int(time.time() * 1000)
         if self._state.is_final(signal_item.signal_id):
             self._metrics["deduplicated"] += 1
@@ -196,6 +207,7 @@ class StrategyEngine:
             logger.debug("deduplicated signal_id=%s", signal_item.signal_id)
             return
 
+        logger.debug("[signal] saving received state signal_id=%s", signal_item.signal_id)
         self._state.save_received(signal_item, raw_row=signal_item.__dict__)
         self._emit_signal_event(
             signal_item,
@@ -204,6 +216,7 @@ class StrategyEngine:
             reason="received",
         )
 
+        logger.debug("[signal] running risk check signal_id=%s", signal_item.signal_id)
         ok, reason = self._risk.check(signal_item)
         if not ok:
             self._metrics["rejected"] += 1
@@ -218,6 +231,7 @@ class StrategyEngine:
             return
 
         self._metrics["accepted"] += 1
+        logger.debug("[signal] risk check passed, dispatching signal_id=%s", signal_item.signal_id)
         self._state.update_status(signal_item.signal_id, status=SignalStatus.SENT, reason="dispatching")
         self._emit_signal_event(
             signal_item,
@@ -227,6 +241,7 @@ class StrategyEngine:
         )
 
         try:
+            logger.debug("[signal] calling executor signal_id=%s action=%s", signal_item.signal_id, signal_item.action)
             result = self._executor.execute(signal_item)
             mapped = _FINAL_MAP.get(result.status.upper())
             if mapped:
@@ -291,20 +306,25 @@ class StrategyEngine:
 
     def _reconcile_once(self) -> None:
         if self._dry_run:
+            logger.debug("[reconcile] skipped (dry-run mode)")
             return
 
         self._last_reconcile_at_ms = int(time.time() * 1000)
         older_than_ms = int((time.time() - self._engine_cfg.reconcile_lag_sec) * 1000)
+        logger.debug("[reconcile] querying candidates older_than_ms=%s", older_than_ms)
         candidates = self._state.list_reconcile_candidates(
             older_than_ms=older_than_ms,
             limit=self._engine_cfg.reconcile_batch_size,
         )
         if not candidates:
+            logger.debug("[reconcile] no candidates to reconcile")
             return
 
+        logger.debug("[reconcile] found %d candidate(s)", len(candidates))
         for row in candidates:
             signal_id = str(row["signal_id"])
             symbol = str(row["symbol"])
+            logger.debug("[reconcile] querying order signal_id=%s symbol=%s", signal_id, symbol)
             try:
                 result = self._executor.query_order(
                     symbol=symbol,
