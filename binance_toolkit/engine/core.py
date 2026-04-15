@@ -19,7 +19,7 @@ from .models import TradingSignal
 from .risk import RiskConfig, RiskGuard
 from .state_store import EngineStateStore, SignalStatus
 
-logger = logging.getLogger("binance_toolkit.engine")
+logger = logging.getLogger("binance_toolkit.engine").setLevel(logging.DEBUG)
 if not isinstance(logger, logging.Logger):
     raise RuntimeError(
         f"logging.getLogger() returned {type(logger)!r} instead of logging.Logger. "
