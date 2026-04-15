@@ -70,6 +70,7 @@ class BinanceConfig:
     engine_max_actions_per_min_symbol: int = 120
     engine_health_host: str = "127.0.0.1"
     engine_health_port: int = 0
+    log_level: str = "INFO"  # DEBUG / INFO / WARNING / ERROR
 
     # ---------- 工厂方法 ----------
 
@@ -161,6 +162,7 @@ class BinanceConfig:
             engine_max_actions_per_min_symbol=int(os.environ.get("ENGINE_MAX_ACTIONS_PER_MIN_SYMBOL", "120")),
             engine_health_host=os.environ.get("ENGINE_HEALTH_HOST", "127.0.0.1"),
             engine_health_port=int(os.environ.get("ENGINE_HEALTH_PORT", "0")),
+            log_level=os.environ.get("LOG_LEVEL", "INFO").upper(),
         )
 
     @classmethod
@@ -217,4 +219,5 @@ class BinanceConfig:
             engine_max_actions_per_min_symbol=data.get("engine_max_actions_per_min_symbol", 120),
             engine_health_host=data.get("engine_health_host", "127.0.0.1"),
             engine_health_port=data.get("engine_health_port", 0),
+            log_level=str(data.get("log_level", "INFO")).upper(),
         )

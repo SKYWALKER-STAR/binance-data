@@ -37,5 +37,6 @@
   "engine_max_notional_per_order": 10000.0,
   "engine_max_actions_per_min_symbol": 120,
   "engine_health_host": "127.0.0.1",
-  "engine_health_port": 8088
+  "engine_health_port": 8088,
+  "log_level": "INFO"
 }

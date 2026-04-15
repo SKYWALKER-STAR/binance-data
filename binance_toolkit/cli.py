@@ -685,6 +685,12 @@ def main(argv: list[str] | None = None) -> None:
                 # 对于不需要 API Key 的公开接口，允许空 key
                 config = BinanceConfig(api_key="")
 
+    # 若配置文件中指定了 log_level 且命令行未显式传 --verbose，则以配置文件为准
+    if not getattr(args, "verbose", False):
+        cfg_level = getattr(logging, config.log_level, None)
+        if isinstance(cfg_level, int):
+            logging.getLogger().setLevel(cfg_level)
+
     handler = _COMMAND_MAP.get(args.command)
     if handler is None:
         parser.print_help()
