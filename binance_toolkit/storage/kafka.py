@@ -87,6 +87,16 @@ class KafkaStorage:
         self._producer.flush()
         logger.debug("批量发布 %d 条标记价格到 Topic [%s] 成功", len(points), topic)
 
+    def write_record(self, record: dict[str, Any], *, topic: str, key: str | None = None) -> None:
+        """发布一条通用 JSON 记录到 Kafka Topic."""
+        self._producer.send(topic, key=key, value=record)
+        self._producer.flush()
+        logger.debug("发布记录到 Topic [%s] 成功 key=%s", topic, key)
+
+    def write_engine_event(self, event: dict[str, Any], *, topic: str, key: str | None = None) -> None:
+        """发布策略引擎审计事件到 Kafka Topic."""
+        self.write_record(event, topic=topic, key=key)
+
     def write_spot_pnl(self, records: list[dict[str, Any]], topic: str = "binance.pnl.spot") -> None:
         """发布现货 PnL 数据到 Kafka Topic.
 

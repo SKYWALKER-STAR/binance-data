@@ -1238,6 +1238,7 @@ kafka.close()
   "mark_price":                "61234.56",
   "unrealized_profit":         "123.456",
   "liquidation_price":         "45000.00",
+
   "isolated_margin":           "0.00000000",
   "notional":                  "6123.456",
   "margin_asset":              "USDT",
@@ -1668,6 +1669,172 @@ SELECT
     parseDateTimeBestEffort(ifNull(recorded_at, ''))   AS recorded_at
 FROM binance_spot_trade_queue;
 ```
+
+### 14. 策略引擎 (ClickHouse Pull -> U 本位执行)
+
+已内置一个最小可用策略引擎层，第二阶段版本支持:
+
+- 一个市场: U 本位合约（WebSocket 交易）
+- 三个动作: `PLACE_ORDER` / `CANCEL_ORDER` / `CANCEL_ALL_ORDERS`
+- 一个信号源: ClickHouse Pull（HTTP）
+- 两类运行输出: 交易结果 Topic + 引擎审计 Topic（均写 Kafka）
+
+#### 架构设计
+
+引擎采用事件驱动 + 持久化状态机:
+
+1. Pull 信号: 定时从 ClickHouse 信号表按 `signal_ts_ms` 增量拉取。
+2. 信号规范化: 将原始行解析为统一 `TradingSignal` 模型。
+3. 幂等去重: 使用本地 SQLite `signal_id` 主键去重，已终态信号不会重复执行。
+4. 风控准入: 过期、字段合法性、名义价值阈值、每 symbol 频率限制。
+5. 执行下发: 调用 `FuturesTradeWsClient` 执行下单/撤单/撤全。
+6. 状态落盘: `RECEIVED -> SENT -> ACKED/FINAL` 持久化，支持重启恢复。
+7. 对账补偿: 对 `SENT/ACKED/FAILED` 状态周期性 `query_order`，修正到最终状态。
+8. 审计回写: 每次接收、拒绝、分发、执行、补偿都会写 Kafka 审计事件。
+9. 健康暴露: 可选启动 `/health` 与 `/metrics` HTTP 端点。
+
+#### CLI 启动
+
+```bash
+# 真实执行
+python -m binance_toolkit engine-futures
+
+# 演练模式: 不真实下单/撤单，仅验证引擎流程
+python -m binance_toolkit engine-futures --dry-run
+```
+
+#### 配置项
+
+可在 `config.json` 或环境变量中配置:
+
+| JSON 字段 | 环境变量 | 说明 |
+|-----------|----------|------|
+| `clickhouse_signal_url` | `CLICKHOUSE_SIGNAL_URL` | ClickHouse HTTP 地址 |
+| `kafka_topic_engine_events` | `KAFKA_TOPIC_ENGINE_EVENTS` | 引擎审计 Topic |
+| `clickhouse_database` | `CLICKHOUSE_DATABASE` | 数据库名 |
+| `clickhouse_user` | `CLICKHOUSE_USER` | 用户名 |
+| `clickhouse_password` | `CLICKHOUSE_PASSWORD` | 密码 |
+| `clickhouse_signal_table` | `CLICKHOUSE_SIGNAL_TABLE` | 信号表名 |
+| `clickhouse_signal_where` | `CLICKHOUSE_SIGNAL_WHERE` | 额外过滤条件 |
+| `clickhouse_timeout` | `CLICKHOUSE_TIMEOUT` | Pull 超时秒数 |
+| `engine_state_db_path` | `ENGINE_STATE_DB_PATH` | 本地状态库路径 |
+| `engine_poll_interval_sec` | `ENGINE_POLL_INTERVAL_SEC` | Pull 周期 |
+| `engine_reconcile_interval_sec` | `ENGINE_RECONCILE_INTERVAL_SEC` | 对账周期 |
+| `engine_reconcile_lag_sec` | `ENGINE_RECONCILE_LAG_SEC` | 对账最小滞后 |
+| `engine_reconcile_batch_size` | `ENGINE_RECONCILE_BATCH_SIZE` | 单次对账上限 |
+| `engine_request_timeout` | `ENGINE_REQUEST_TIMEOUT` | 交易请求超时 |
+| `engine_startup_lookback_ms` | `ENGINE_STARTUP_LOOKBACK_MS` | 首次启动回看窗口 |
+| `engine_clickhouse_batch_size` | `ENGINE_CLICKHOUSE_BATCH_SIZE` | 单次 Pull 条数 |
+| `engine_max_notional_per_order` | `ENGINE_MAX_NOTIONAL_PER_ORDER` | 单笔最大名义价值，0 表示不限制 |
+| `engine_max_actions_per_min_symbol` | `ENGINE_MAX_ACTIONS_PER_MIN_SYMBOL` | 每 symbol 每分钟动作上限 |
+| `engine_health_host` | `ENGINE_HEALTH_HOST` | 健康端点监听地址 |
+| `engine_health_port` | `ENGINE_HEALTH_PORT` | 健康端点端口，0 表示关闭 |
+
+#### ClickHouse 信号表示例
+
+```sql
+CREATE TABLE strategy_signals
+(
+        signal_id String,
+        strategy_id String,
+        symbol String,
+        action LowCardinality(String),
+        signal_ts_ms Int64,
+        ttl_ms Int64 DEFAULT 0,
+        priority Int32 DEFAULT 0,
+
+        side Nullable(String),
+        order_type Nullable(String),
+        quantity Nullable(String),
+        price Nullable(String),
+        time_in_force Nullable(String),
+        position_side Nullable(String),
+        reduce_only Nullable(String),
+        close_position Nullable(String),
+
+        order_id Nullable(Int64),
+        orig_client_order_id Nullable(String)
+)
+ENGINE = MergeTree
+ORDER BY (signal_ts_ms, strategy_id, signal_id);
+```
+
+#### 信号字段说明
+
+- 通用字段:
+    - `signal_id`: 全局唯一信号 ID（幂等键）
+    - `strategy_id`: 策略标识
+    - `symbol`: 如 `BTCUSDT`
+    - `action`: `PLACE_ORDER` / `CANCEL_ORDER` / `CANCEL_ALL_ORDERS`
+    - `signal_ts_ms`: 信号时间戳（毫秒）
+    - `ttl_ms`: 生存时间，0 表示不过期
+    - `priority`: 同时刻优先级（数值越大越先执行）
+- `PLACE_ORDER` 必填:
+    - `side`: `BUY` / `SELL`
+    - `order_type`: 如 `LIMIT` / `MARKET`
+    - `quantity`
+    - `price`（若启用了名义价值风控）
+- `CANCEL_ORDER` 必填（二选一）:
+    - `order_id`
+    - `orig_client_order_id`
+- `CANCEL_ALL_ORDERS` 必填:
+    - `symbol`
+
+#### Kafka 审计 Topic
+
+引擎不会直接写 ClickHouse。第二阶段里，执行日志与引擎状态变化统一写回 Kafka：
+
+- 交易结果: `binance.trade.usdt_futures`
+- 引擎审计: `binance.engine.futures`
+
+对应的 ClickHouse Kafka 表、存储表和物化视图脚本见 `clickhouse_engine_audit_setup.sql`。
+
+审计事件示例：
+
+```json
+{
+    "event_type": "signal_executed",
+    "signal_id": "sig-10001",
+    "strategy_id": "trend_follow",
+    "symbol": "BTCUSDT",
+    "action": "PLACE_ORDER",
+    "status": "FILLED",
+    "reason": "order placed",
+    "order_id": 123456789,
+    "client_order_id": "so8e1d2a3b1234567890",
+    "metrics": {
+        "pulled": 10,
+        "accepted": 8,
+        "rejected": 1,
+        "executed": 7,
+        "failed": 0,
+        "deduplicated": 2,
+        "reconciled": 1
+    },
+    "recorded_at": "2026-04-15T12:00:00+00:00"
+}
+```
+
+#### 健康端点
+
+当 `engine_health_port > 0` 时，引擎会启动一个轻量 HTTP 服务：
+
+- `/health`: 返回 JSON 运行快照
+- `/metrics`: 返回 Prometheus 文本格式计数器
+
+示例：
+
+```bash
+curl http://127.0.0.1:8088/health
+curl http://127.0.0.1:8088/metrics
+```
+
+#### 工程保证
+
+- 幂等: 同一 `signal_id` 只会进入一次终态。
+- 重启恢复: 状态与 cursor 落地在 SQLite，重启后从断点续跑。
+- 一致性补偿: 发送后异常场景通过 `query_order` 对账收敛。
+- 可观测性: 引擎持续输出处理统计，并通过 Kafka 审计事件与 `/metrics` 暴露运行状态。
 
 #### 与合约交易的差异
 

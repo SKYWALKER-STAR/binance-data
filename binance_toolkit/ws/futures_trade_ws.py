@@ -260,6 +260,15 @@ class FuturesTradeWsClient:
         params.update(kwargs)
         return self._request("order.cancel", params, action="cancel_order")
 
+    def cancel_all_orders(
+        self,
+        symbol: str,
+        **kwargs: Any,
+    ) -> list[dict]:
+        """撤销指定交易对的所有挂单."""
+        params: dict[str, Any] = {"symbol": symbol}
+        params.update(kwargs)
+        return self._request_list("openOrders.cancelAll", params, action="cancel_all_orders")
     def query_order(
         self,
         symbol: str,
@@ -500,6 +509,61 @@ class FuturesTradeWsClient:
                 filled_at=filled_at,
                 topic=self._kafka_topic,
             )
+
+        return result
+
+    def _request_list(self, method: str, params: dict[str, Any], *, action: str) -> list[dict]:
+        """发送 WebSocket 请求并等待响应（返回列表）."""
+        if not self._connected.is_set():
+            raise ConnectionError("WebSocket 未连接，请稍后重试")
+
+        req_id = str(uuid.uuid4())
+        signed_params = self._sign_params(params)
+        message = json.dumps({"id": req_id, "method": method, "params": signed_params})
+
+        pending = _PendingRequest()
+        self._pending[req_id] = pending
+
+        sent_at = datetime.now(timezone.utc)
+
+        try:
+            with self._lock:
+                self._ws.send(message)  # type: ignore[union-attr]
+            logger.debug("已发送 %s 请求 id=%s", method, req_id)
+
+            if not pending.wait(timeout=self._timeout):
+                raise TimeoutError(f"{method} 请求超时 (>{self._timeout}s), id={req_id}")
+
+            response = pending.result
+        finally:
+            self._pending.pop(req_id, None)
+
+        status = response.get("status", 0)
+        if status != 200:
+            error = response.get("error", {})
+            raise BinanceAPIError(
+                f"{method} 失败: {error.get('msg', '未知错误')}",
+                status_code=status,
+                error_code=error.get("code"),
+                response=response,
+            )
+
+        result: list[dict] = response["result"]
+        logger.info("[%s] 共 %d 条记录, sent_at=%s", action, len(result), sent_at.isoformat())
+
+        if self._kafka is not None:
+            for item in result:
+                update_time_ms = item.get("updateTime") or item.get("time")
+                filled_at = None
+                if update_time_ms:
+                    filled_at = datetime.fromtimestamp(update_time_ms / 1000, tz=timezone.utc)
+                self._kafka.write_futures_trade(
+                    item,
+                    action=action,
+                    sent_at=sent_at,
+                    filled_at=filled_at,
+                    topic=self._kafka_topic,
+                )
 
         return result
 

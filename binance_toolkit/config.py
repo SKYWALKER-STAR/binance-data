@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -46,6 +46,30 @@ class BinanceConfig:
     kafka_topic_usdt: str = "binance.mark_price.usdt"    # U本位合约标记价格 Topic
     kafka_topic_futures_trade: str = "binance.trade.usdt_futures"  # U本位合约交易结果 Topic
     kafka_topic_spot_trade: str = "binance.trade.spot"   # 现货交易结果 Topic
+    kafka_topic_engine_events: str = "binance.engine.futures"      # 策略引擎审计 Topic
+
+    # ClickHouse signal source (策略引擎 Pull)
+    clickhouse_signal_url: Optional[str] = None
+    clickhouse_database: str = "default"
+    clickhouse_user: Optional[str] = None
+    clickhouse_password: Optional[str] = None
+    clickhouse_signal_table: str = "strategy_signals"
+    clickhouse_signal_where: Optional[str] = None
+    clickhouse_timeout: int = 10
+
+    # Strategy Engine
+    engine_state_db_path: str = ".state/strategy_engine.db"
+    engine_poll_interval_sec: float = 1.0
+    engine_reconcile_interval_sec: float = 5.0
+    engine_reconcile_lag_sec: int = 2
+    engine_reconcile_batch_size: int = 200
+    engine_request_timeout: int = 10
+    engine_startup_lookback_ms: int = 300000
+    engine_clickhouse_batch_size: int = 200
+    engine_max_notional_per_order: float = 0.0
+    engine_max_actions_per_min_symbol: int = 120
+    engine_health_host: str = "127.0.0.1"
+    engine_health_port: int = 0
 
     # ---------- 工厂方法 ----------
 
@@ -73,6 +97,26 @@ class BinanceConfig:
             KAFKA_TOPIC_USDT          (可选, U本位标记价格 Topic, 默认 binance.mark_price.usdt)
             KAFKA_TOPIC_FUTURES_TRADE (可选, U本位合约交易结果 Topic, 默认 binance.trade.usdt_futures)
             KAFKA_TOPIC_SPOT_TRADE    (可选, 现货交易结果 Topic, 默认 binance.trade.spot)
+            KAFKA_TOPIC_ENGINE_EVENTS (可选, 策略引擎审计 Topic, 默认 binance.engine.futures)
+            CLICKHOUSE_SIGNAL_URL      (可选, ClickHouse HTTP 地址)
+            CLICKHOUSE_DATABASE        (可选, 默认 default)
+            CLICKHOUSE_USER            (可选)
+            CLICKHOUSE_PASSWORD        (可选)
+            CLICKHOUSE_SIGNAL_TABLE    (可选, 默认 strategy_signals)
+            CLICKHOUSE_SIGNAL_WHERE    (可选, 额外过滤条件)
+            CLICKHOUSE_TIMEOUT         (可选, 默认 10)
+            ENGINE_STATE_DB_PATH       (可选, 默认 .state/strategy_engine.db)
+            ENGINE_POLL_INTERVAL_SEC   (可选, 默认 1.0)
+            ENGINE_RECONCILE_INTERVAL_SEC (可选, 默认 5.0)
+            ENGINE_RECONCILE_LAG_SEC   (可选, 默认 2)
+            ENGINE_RECONCILE_BATCH_SIZE (可选, 默认 200)
+            ENGINE_REQUEST_TIMEOUT     (可选, 默认 10)
+            ENGINE_STARTUP_LOOKBACK_MS (可选, 默认 300000)
+            ENGINE_CLICKHOUSE_BATCH_SIZE (可选, 默认 200)
+            ENGINE_MAX_NOTIONAL_PER_ORDER (可选, 默认 0 不限制)
+            ENGINE_MAX_ACTIONS_PER_MIN_SYMBOL (可选, 默认 120)
+            ENGINE_HEALTH_HOST         (可选, 默认 127.0.0.1)
+            ENGINE_HEALTH_PORT         (可选, 默认 0 表示关闭)
         """
         api_key = os.environ.get("BINANCE_API_KEY", "")
         if not api_key:
@@ -97,6 +141,26 @@ class BinanceConfig:
             kafka_topic_usdt=os.environ.get("KAFKA_TOPIC_USDT", "binance.mark_price.usdt"),
             kafka_topic_futures_trade=os.environ.get("KAFKA_TOPIC_FUTURES_TRADE", "binance.trade.usdt_futures"),
             kafka_topic_spot_trade=os.environ.get("KAFKA_TOPIC_SPOT_TRADE", "binance.trade.spot"),
+            kafka_topic_engine_events=os.environ.get("KAFKA_TOPIC_ENGINE_EVENTS", "binance.engine.futures"),
+            clickhouse_signal_url=os.environ.get("CLICKHOUSE_SIGNAL_URL"),
+            clickhouse_database=os.environ.get("CLICKHOUSE_DATABASE", "default"),
+            clickhouse_user=os.environ.get("CLICKHOUSE_USER"),
+            clickhouse_password=os.environ.get("CLICKHOUSE_PASSWORD"),
+            clickhouse_signal_table=os.environ.get("CLICKHOUSE_SIGNAL_TABLE", "strategy_signals"),
+            clickhouse_signal_where=os.environ.get("CLICKHOUSE_SIGNAL_WHERE"),
+            clickhouse_timeout=int(os.environ.get("CLICKHOUSE_TIMEOUT", "10")),
+            engine_state_db_path=os.environ.get("ENGINE_STATE_DB_PATH", ".state/strategy_engine.db"),
+            engine_poll_interval_sec=float(os.environ.get("ENGINE_POLL_INTERVAL_SEC", "1.0")),
+            engine_reconcile_interval_sec=float(os.environ.get("ENGINE_RECONCILE_INTERVAL_SEC", "5.0")),
+            engine_reconcile_lag_sec=int(os.environ.get("ENGINE_RECONCILE_LAG_SEC", "2")),
+            engine_reconcile_batch_size=int(os.environ.get("ENGINE_RECONCILE_BATCH_SIZE", "200")),
+            engine_request_timeout=int(os.environ.get("ENGINE_REQUEST_TIMEOUT", "10")),
+            engine_startup_lookback_ms=int(os.environ.get("ENGINE_STARTUP_LOOKBACK_MS", "300000")),
+            engine_clickhouse_batch_size=int(os.environ.get("ENGINE_CLICKHOUSE_BATCH_SIZE", "200")),
+            engine_max_notional_per_order=float(os.environ.get("ENGINE_MAX_NOTIONAL_PER_ORDER", "0")),
+            engine_max_actions_per_min_symbol=int(os.environ.get("ENGINE_MAX_ACTIONS_PER_MIN_SYMBOL", "120")),
+            engine_health_host=os.environ.get("ENGINE_HEALTH_HOST", "127.0.0.1"),
+            engine_health_port=int(os.environ.get("ENGINE_HEALTH_PORT", "0")),
         )
 
     @classmethod
@@ -133,4 +197,24 @@ class BinanceConfig:
             kafka_topic_usdt=data.get("kafka_topic_usdt", "binance.mark_price.usdt"),
             kafka_topic_futures_trade=data.get("kafka_topic_futures_trade", "binance.trade.usdt_futures"),
             kafka_topic_spot_trade=data.get("kafka_topic_spot_trade", "binance.trade.spot"),
+            kafka_topic_engine_events=data.get("kafka_topic_engine_events", "binance.engine.futures"),
+            clickhouse_signal_url=data.get("clickhouse_signal_url"),
+            clickhouse_database=data.get("clickhouse_database", "default"),
+            clickhouse_user=data.get("clickhouse_user"),
+            clickhouse_password=data.get("clickhouse_password"),
+            clickhouse_signal_table=data.get("clickhouse_signal_table", "strategy_signals"),
+            clickhouse_signal_where=data.get("clickhouse_signal_where"),
+            clickhouse_timeout=data.get("clickhouse_timeout", 10),
+            engine_state_db_path=data.get("engine_state_db_path", ".state/strategy_engine.db"),
+            engine_poll_interval_sec=data.get("engine_poll_interval_sec", 1.0),
+            engine_reconcile_interval_sec=data.get("engine_reconcile_interval_sec", 5.0),
+            engine_reconcile_lag_sec=data.get("engine_reconcile_lag_sec", 2),
+            engine_reconcile_batch_size=data.get("engine_reconcile_batch_size", 200),
+            engine_request_timeout=data.get("engine_request_timeout", 10),
+            engine_startup_lookback_ms=data.get("engine_startup_lookback_ms", 300000),
+            engine_clickhouse_batch_size=data.get("engine_clickhouse_batch_size", 200),
+            engine_max_notional_per_order=data.get("engine_max_notional_per_order", 0.0),
+            engine_max_actions_per_min_symbol=data.get("engine_max_actions_per_min_symbol", 120),
+            engine_health_host=data.get("engine_health_host", "127.0.0.1"),
+            engine_health_port=data.get("engine_health_port", 0),
         )
