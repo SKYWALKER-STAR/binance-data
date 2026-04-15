@@ -19,7 +19,7 @@ from .models import TradingSignal
 from .risk import RiskConfig, RiskGuard
 from .state_store import EngineStateStore, SignalStatus
 
-logger = logging.getLogger("binance_toolkit.engine").setLevel(logging.DEBUG)
+logger = logging.getLogger("binance_toolkit.engine")
 
 _FINAL_MAP = {
     "FILLED": SignalStatus.FILLED,
