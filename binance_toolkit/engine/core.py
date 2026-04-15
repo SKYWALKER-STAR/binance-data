@@ -20,6 +20,12 @@ from .risk import RiskConfig, RiskGuard
 from .state_store import EngineStateStore, SignalStatus
 
 logger = logging.getLogger("binance_toolkit.engine")
+if not isinstance(logger, logging.Logger):
+    raise RuntimeError(
+        f"logging.getLogger() returned {type(logger)!r} instead of logging.Logger. "
+        "A local 'logging.py' file or 'logging/' directory is shadowing stdlib logging. "
+        f"Loaded logging module from: {getattr(logging, '__file__', 'unknown')}"
+    )
 
 _FINAL_MAP = {
     "FILLED": SignalStatus.FILLED,
@@ -380,7 +386,9 @@ class StrategyEngine:
         return lookback
 
     def _handle_signal(self, signum: int, frame: Any) -> None:
-        logger.info("received signal=%s, stopping engine", signum)
+        # logger may be None during interpreter shutdown
+        if logger is not None:
+            logger.info("received signal=%s, stopping engine", signum)
         self._stop = True
 
     def _emit_signal_event(
