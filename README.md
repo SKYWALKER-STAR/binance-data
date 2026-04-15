@@ -1541,6 +1541,53 @@ kafka.close()
 | `kafka_topic` | `str` | 目标 Topic（默认 `binance.trade.spot`）|
 | `request_timeout` | `int` | 单次请求超时秒数（默认 `10`）|
 
+#### 引擎架构
+
+`SpotTradeWsClient` 与 `FuturesTradeWsClient` 采用相同的引擎架构，保证一致的可靠性和可扩展性：
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                      SpotTradeWsClient                              │
+├──────────────────────────────────────┬──────────────────────────────┤
+│              主线程                  │          后台线程            │
+│  ┌─────────────────────────────┐     │  ┌────────────────────────┐  │
+│  │  new_order / cancel_order   │     │  │    _recv_thread        │  │
+│  │  query_order / cancel_all   │     │  │  ──────────────────    │  │
+│  │           ↓                 │     │  │  - 接收 WebSocket 消息 │  │
+│  │  _request() → send + wait   │     │  │  - 分发响应到 pending  │  │
+│  │           ↓                 │     │  │  - 断线自动重连        │  │
+│  │     Kafka 写入              │     │  │  - 超时继续等待        │  │
+│  └─────────────────────────────┘     │  └────────────────────────┘  │
+│                                      │  ┌────────────────────────┐  │
+│                                      │  │    _ping_thread        │  │
+│                                      │  │  ──────────────────    │  │
+│                                      │  │  - 每 150 秒发 ping    │  │
+│                                      │  │  - 保持连接活跃        │  │
+│                                      │  └────────────────────────┘  │
+└──────────────────────────────────────┴──────────────────────────────┘
+```
+
+**连接管理特性:**
+
+| 特性 | 说明 |
+|------|------|
+| **自动连接** | 实例化时自动建立 WebSocket 连接 |
+| **心跳保活** | 每 150 秒发送 ping 帧，防止服务端因空闲断开 |
+| **读超时** | socket 读超时设为 30 秒，超时后继续等待（正常空闲行为） |
+| **断线重连** | 连接断开后自动指数退避重连（最长 60 秒） |
+| **请求超时** | 单次请求默认 10 秒超时，可配置 |
+| **线程安全** | 写操作加锁保护，支持多线程并发调用 |
+| **优雅关闭** | `close()` 或 `with` 语句自动关闭连接和线程 |
+
+**常量配置:**
+
+| 常量 | 值 | 说明 |
+|------|-----|------|
+| `_DEFAULT_TIMEOUT` | 10 | 请求超时秒数 |
+| `_MAX_RECONNECT_WAIT` | 60 | 重连最大等待秒数 |
+| `_RECV_TIMEOUT` | 30 | socket 读超时秒数 |
+| `_PING_INTERVAL` | 150 | 心跳间隔秒数 |
+
 #### 支持的订单类型
 
 | 订单类型 | 必填参数 | 可选参数 |
@@ -1552,6 +1599,16 @@ kafka.close()
 | `STOP_LOSS_LIMIT` | `quantity`, `price`, `stopPrice`, `timeInForce` | `trailingDelta`, `icebergQty` |
 | `TAKE_PROFIT` | `quantity`, `stopPrice` | `trailingDelta` |
 | `TAKE_PROFIT_LIMIT` | `quantity`, `price`, `stopPrice`, `timeInForce` | `trailingDelta`, `icebergQty` |
+
+#### CLI 启动
+
+```bash
+# 真实执行
+python -m binance_toolkit engine-spot
+
+# 模拟执行（不实际下单）
+python -m binance_toolkit engine-spot --dry-run
+```
 
 #### ClickHouse 建表参考
 
@@ -1670,24 +1727,24 @@ SELECT
 FROM binance_spot_trade_queue;
 ```
 
-### 14. 策略引擎 (ClickHouse Pull -> U 本位执行)
+### 15. 策略引擎 (ClickHouse Pull -> 多市场执行)
 
-已内置一个最小可用策略引擎层，第二阶段版本支持:
+已内置一个最小可用策略引擎层，支持多市场信号驱动交易:
 
-- 一个市场: U 本位合约（WebSocket 交易）
-- 三个动作: `PLACE_ORDER` / `CANCEL_ORDER` / `CANCEL_ALL_ORDERS`
-- 一个信号源: ClickHouse Pull（HTTP）
-- 两类运行输出: 交易结果 Topic + 引擎审计 Topic（均写 Kafka）
+- **两个市场**: U 本位合约（`engine-futures`）+ 现货（`engine-spot`）
+- **三个动作**: `PLACE_ORDER` / `CANCEL_ORDER` / `CANCEL_ALL_ORDERS`
+- **一个信号源**: ClickHouse Pull（HTTP），通过 `market` 字段区分市场
+- **两类运行输出**: 交易结果 Topic + 引擎审计 Topic（均写 Kafka）
 
 #### 架构设计
 
 引擎采用事件驱动 + 持久化状态机:
 
-1. Pull 信号: 定时从 ClickHouse 信号表按 `signal_ts_ms` 增量拉取。
+1. Pull 信号: 定时从 ClickHouse 信号表按 `signal_ts_ms` 增量拉取，按 `market` 字段过滤。
 2. 信号规范化: 将原始行解析为统一 `TradingSignal` 模型。
 3. 幂等去重: 使用本地 SQLite `signal_id` 主键去重，已终态信号不会重复执行。
 4. 风控准入: 过期、字段合法性、名义价值阈值、每 symbol 频率限制。
-5. 执行下发: 调用 `FuturesTradeWsClient` 执行下单/撤单/撤全。
+5. 执行下发: 调用对应市场的 WebSocket 客户端执行下单/撤单/撤全。
 6. 状态落盘: `RECEIVED -> SENT -> ACKED/FINAL` 持久化，支持重启恢复。
 7. 对账补偿: 对 `SENT/ACKED/FAILED` 状态周期性 `query_order`，修正到最终状态。
 8. 审计回写: 每次接收、拒绝、分发、执行、补偿都会写 Kafka 审计事件。
@@ -1696,12 +1753,16 @@ FROM binance_spot_trade_queue;
 #### CLI 启动
 
 ```bash
-# 真实执行
-python -m binance_toolkit engine-futures
+# U 本位合约引擎
+python -m binance_toolkit engine-futures           # 真实执行
+python -m binance_toolkit engine-futures --dry-run # 演练模式
 
-# 演练模式: 不真实下单/撤单，仅验证引擎流程
-python -m binance_toolkit engine-futures --dry-run
+# 现货引擎
+python -m binance_toolkit engine-spot              # 真实执行
+python -m binance_toolkit engine-spot --dry-run    # 演练模式
 ```
+
+**注意**: 两个引擎可以同时运行，各自处理对应 `market` 的信号，互不干扰。
 
 #### 配置项
 
@@ -1737,6 +1798,7 @@ CREATE TABLE strategy_signals
 (
         signal_id String,
         strategy_id String,
+        market LowCardinality(String) DEFAULT 'futures',  -- 'spot' / 'futures'
         symbol String,
         action LowCardinality(String),
         signal_ts_ms Int64,
@@ -1756,7 +1818,13 @@ CREATE TABLE strategy_signals
         orig_client_order_id Nullable(String)
 )
 ENGINE = MergeTree
-ORDER BY (signal_ts_ms, strategy_id, signal_id);
+ORDER BY (signal_ts_ms, market, strategy_id, signal_id);
+```
+
+**注意:** 如果是从旧版本升级，需要执行以下 ALTER 语句添加 `market` 字段：
+
+```sql
+ALTER TABLE strategy_signals ADD COLUMN market LowCardinality(String) DEFAULT 'futures' AFTER strategy_id;
 ```
 
 #### 信号字段说明
@@ -1764,6 +1832,7 @@ ORDER BY (signal_ts_ms, strategy_id, signal_id);
 - 通用字段:
     - `signal_id`: 全局唯一信号 ID（幂等键）
     - `strategy_id`: 策略标识
+    - `market`: 目标市场，`spot`（现货）或 `futures`（U本位合约）
     - `symbol`: 如 `BTCUSDT`
     - `action`: `PLACE_ORDER` / `CANCEL_ORDER` / `CANCEL_ALL_ORDERS`
     - `signal_ts_ms`: 信号时间戳（毫秒）
@@ -1779,6 +1848,42 @@ ORDER BY (signal_ts_ms, strategy_id, signal_id);
     - `orig_client_order_id`
 - `CANCEL_ALL_ORDERS` 必填:
     - `symbol`
+
+#### 多市场引擎架构
+
+引擎通过 `market` 字段区分信号所属市场，各市场引擎独立运行：
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   strategy_signals 表                       │
+│  ┌─────────┬────────┬────────┬────────┬─────────┬───────┐  │
+│  │signal_id│ market │ symbol │ action │  side   │ price │  │
+│  ├─────────┼────────┼────────┼────────┼─────────┼───────┤  │
+│  │ sig_001 │ spot   │ BTCUSDT│ PLACE  │  BUY    │ 60000 │  │
+│  │ sig_002 │ futures│ BTCUSDT│ PLACE  │  SELL   │ 60100 │  │
+│  └─────────┴────────┴────────┴────────┴─────────┴───────┘  │
+└─────────────────────────────────────────────────────────────┘
+                          │
+          ┌───────────────┼───────────────┐
+          ▼               │               ▼
+┌─────────────────┐       │     ┌─────────────────┐
+│  engine-spot    │       │     │ engine-futures  │
+│  (独立进程)     │       │     │  (独立进程)     │
+│                 │       │     │                 │
+│ WHERE market=   │       │     │ WHERE market=   │
+│     'spot'      │       │     │   'futures'     │
+└────────┬────────┘       │     └────────┬────────┘
+         │                │              │
+         ▼                │              ▼
+  SpotTradeWsClient       │    FuturesTradeWsClient
+         │                │              │
+         ▼                │              ▼
+  binance.trade.spot      │    binance.trade.usdt_futures
+```
+
+**状态隔离:** 每个引擎使用独立的 SQLite 状态数据库：
+- `engine-futures`: `.state/strategy_engine_futures.db`
+- `engine-spot`: `.state/strategy_engine_spot.db`
 
 #### Kafka 审计 Topic
 

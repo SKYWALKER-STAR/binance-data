@@ -240,9 +240,17 @@ def _cmd_futures_pnl(tk: BinanceToolkit, args: argparse.Namespace) -> None:
 
 def _cmd_engine_futures(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     """启动策略引擎（ClickHouse Pull -> U本位交易动作）."""
-    from .engine import StrategyEngine
+    from .engine import FuturesStrategyEngine
 
-    engine = StrategyEngine(tk._client.config, dry_run=args.dry_run)
+    engine = FuturesStrategyEngine(tk._client.config, dry_run=args.dry_run)
+    engine.run()
+
+
+def _cmd_engine_spot(tk: BinanceToolkit, args: argparse.Namespace) -> None:
+    """启动现货策略引擎（ClickHouse Pull -> 现货交易动作）."""
+    from .engine import SpotStrategyEngine
+
+    engine = SpotStrategyEngine(tk._client.config, dry_run=args.dry_run)
     engine.run()
 
 
@@ -542,10 +550,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="静默模式, 不打印到控制台",
     )
 
-    # engine-futures (策略引擎)
+    # engine-futures (U本位合约策略引擎)
     p = sub.add_parser(
         "engine-futures",
-        help="启动策略引擎 (ClickHouse Pull 信号源, U本位下单/撤单/撤全)",
+        help="启动 U 本位合约策略引擎 (ClickHouse Pull 信号源, market='futures')",
+    )
+    p.add_argument(
+        "--dry-run", action="store_true",
+        help="演练模式: 不真实下单/撤单, 仅走引擎状态流转",
+    )
+
+    # engine-spot (现货策略引擎)
+    p = sub.add_parser(
+        "engine-spot",
+        help="启动现货策略引擎 (ClickHouse Pull 信号源, market='spot')",
     )
     p.add_argument(
         "--dry-run", action="store_true",
@@ -640,6 +658,7 @@ _COMMAND_MAP = {
     "spot-pnl": _cmd_spot_pnl,
     "futures-pnl": _cmd_futures_pnl,
     "engine-futures": _cmd_engine_futures,
+    "engine-spot": _cmd_engine_spot,
 }
 
 

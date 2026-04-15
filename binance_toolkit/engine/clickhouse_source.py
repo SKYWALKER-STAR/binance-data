@@ -21,6 +21,7 @@ class ClickHouseSourceConfig:
     user: str | None = None
     password: str | None = None
     where_clause: str | None = None
+    market: str | None = None  # 过滤市场类型: 'spot' / 'futures' / None(不过滤)
     timeout: int = 10
     batch_size: int = 200
     startup_lookback_ms: int = 5 * 60 * 1000
@@ -52,6 +53,9 @@ class ClickHouseSignalSource:
 
     def _build_query(self, *, after_ts_ms: int) -> str:
         where_parts = [f"signal_ts_ms > {int(after_ts_ms)}"]
+        # 添加 market 过滤（如果配置了）
+        if self._config.market:
+            where_parts.append(f"market = '{self._config.market}'")
         if self._config.where_clause:
             where_parts.append(f"({self._config.where_clause})")
 
