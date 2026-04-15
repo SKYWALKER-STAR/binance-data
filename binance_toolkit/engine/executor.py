@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 from ..ws.futures_trade_ws import FuturesTradeWsClient
 from .models import ExecutionResult, TradingSignal
@@ -16,7 +17,7 @@ class ExecutionConfig:
 class FuturesExecutionAdapter:
     """Map normalized signals to futures ws client calls."""
 
-    def __init__(self, client: FuturesTradeWsClient, config: ExecutionConfig):
+    def __init__(self, client: Optional[FuturesTradeWsClient], config: ExecutionConfig):
         self._client = client
         self._config = config
 
@@ -28,6 +29,9 @@ class FuturesExecutionAdapter:
                 message="dry-run accepted",
                 client_order_id=signal.deterministic_client_order_id(),
             )
+
+        if self._client is None:
+            raise RuntimeError("execution client is not initialized")
 
         if signal.action == "PLACE_ORDER":
             result = self._client.new_order(
@@ -76,6 +80,10 @@ class FuturesExecutionAdapter:
         raise ValueError(f"unsupported action: {signal.action}")
 
     def query_order(self, *, symbol: str, order_id: int | None, client_order_id: str | None) -> dict:
+        if self._config.dry_run:
+            return {"status": "ACK"}
+        if self._client is None:
+            raise RuntimeError("execution client is not initialized")
         return self._client.query_order(
             symbol=symbol,
             order_id=order_id,

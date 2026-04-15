@@ -41,6 +41,7 @@ class StrategyEngine:
     """Event-driven strategy engine with pull source and durable state."""
 
     def __init__(self, app_config: BinanceConfig, *, dry_run: bool = False):
+        self._dry_run = dry_run
         source_cfg = ClickHouseSourceConfig(
             url=app_config.clickhouse_signal_url or "",
             database=app_config.clickhouse_database,
@@ -74,12 +75,14 @@ class StrategyEngine:
             self._kafka = KafkaStorage(app_config)
             self._audit = EngineAuditLogger(self._kafka, app_config.kafka_topic_engine_events)
 
-        self._trade_client = FuturesTradeWsClient(
-            app_config,
-            kafka_storage=self._kafka,
-            kafka_topic=app_config.kafka_topic_futures_trade,
-            request_timeout=app_config.engine_request_timeout,
-        )
+        self._trade_client: FuturesTradeWsClient | None = None
+        if not dry_run:
+            self._trade_client = FuturesTradeWsClient(
+                app_config,
+                kafka_storage=self._kafka,
+                kafka_topic=app_config.kafka_topic_futures_trade,
+                request_timeout=app_config.engine_request_timeout,
+            )
         self._executor = FuturesExecutionAdapter(
             self._trade_client,
             ExecutionConfig(dry_run=dry_run),
@@ -116,7 +119,7 @@ class StrategyEngine:
             "engine_started",
             payload={
                 "cursor_ms": cursor,
-                "dry_run": self._executor._config.dry_run,
+                "dry_run": self._dry_run,
             },
             metrics=self._metrics,
         )
@@ -150,7 +153,8 @@ class StrategyEngine:
     def close(self) -> None:
         self._health.stop()
         self._source.close()
-        self._trade_client.close()
+        if self._trade_client is not None:
+            self._trade_client.close()
         self._state.close()
         if self._kafka is not None:
             self._kafka.close()
@@ -286,6 +290,9 @@ class StrategyEngine:
             logger.exception("signal execute failed signal_id=%s", signal_item.signal_id)
 
     def _reconcile_once(self) -> None:
+        if self._dry_run:
+            return
+
         self._last_reconcile_at_ms = int(time.time() * 1000)
         older_than_ms = int((time.time() - self._engine_cfg.reconcile_lag_sec) * 1000)
         candidates = self._state.list_reconcile_candidates(
