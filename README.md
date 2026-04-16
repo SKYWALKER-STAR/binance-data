@@ -19,11 +19,13 @@ biannce-api/
 │       ├── base.py           # API 模块基类
 │       ├── market.py         # 现货市场数据 (公开, 无需签名)
 │       ├── coin_futures.py   # 币本位合约市场数据 (DAPI, 无需签名)
+│       ├── futures_market.py # U本位合约市场数据 (FAPI, 无需签名, 含历史K线)
 │       ├── trade.py          # 现货交易 (需要签名)
 │       └── account.py        # 账户信息 (需要签名)
 │   ├── ws/                   # WebSocket 模块
 │   │   ├── coin_mark_price_stream.py  # 币本位合约标记价格实时流
 │   │   ├── usdt_mark_price_stream.py  # U本位合约标记价格实时流
+│   │   ├── usdt_kline_stream.py       # U本位合约 K线 WebSocket 流
 │   │   ├── futures_trade_ws.py        # U本位合约 WebSocket 交易客户端
 │   │   └── spot_trade_ws.py           # 现货 WebSocket 交易客户端
 │   ├── collector/            # 数据采集器
@@ -104,6 +106,44 @@ python -m binance_toolkit funding-info
 # 查看帮助
 python -m binance_toolkit --help
 ```
+
+### 4. K 线数据快速命令
+
+#### 实时 K 线（WebSocket，仅收盘推送一次）
+
+```bash
+# 订阅 BTCUSDT 日K线，打印到控制台（调试）
+python -m binance_toolkit ws-kline-usdt --symbols BTCUSDT
+
+# 订阅多个合约日K线，写入 Kafka（生产推荐）
+python -m binance_toolkit ws-kline-usdt --symbols BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT --write-kafka --quiet
+
+# 订阅 1 小时 K线（含未收盘的实时更新）
+python -m binance_toolkit ws-kline-usdt --symbols BTCUSDT --interval 1h --all-updates --write-kafka --quiet
+```
+
+#### 历史 K 线（REST API，自动分页）
+
+```bash
+# 查询 BTCUSDT 最近 500 条日K线（打印到控制台）
+python -m binance_toolkit fetch-klines --symbols BTCUSDT
+
+# 回填指定日期范围的日K线到 Kafka
+python -m binance_toolkit fetch-klines --symbols BTCUSDT,ETHUSDT --start 2024-01-01 --end 2025-01-01 --write-kafka --quiet
+
+# 回填全量历史（从最早数据到现在）
+python -m binance_toolkit fetch-klines --symbols BTCUSDT --write-kafka --quiet
+
+# 拉取 4 小时 K线，指定时间范围
+python -m binance_toolkit fetch-klines --symbols BTCUSDT --interval 4h --start 2025-01-01 --end 2026-01-01 --write-kafka --quiet
+
+# 打印 JSON 格式（调试）
+python -m binance_toolkit fetch-klines --symbols BTCUSDT --interval 1d --start 2026-01-01 --json
+```
+
+> **两者共用同一个 Kafka Topic `binance.kline.usdt_futures` 和 ClickHouse 表**，可以先用 `fetch-klines` 回填历史，再用 `ws-kline-usdt` 持续接收新K线，无缝衔接。
+
+---
 
 ### 5. 价格采集常驻进程
 
@@ -435,7 +475,263 @@ InfluxDB 中写入的数据格式：
 |-------------|-----|-------|-----------|
 | `binance_ticker` | `symbol=BTCUSDT`, `margin_type=USDT` | `mark_price`, `index_price`, `last_funding_rate`, `next_funding_time` | UTC 时间 |
 
+### 7.2 U 本位合约 K 线 WebSocket 流
+
+通过 WebSocket 实时接收 U 本位永续合约的 K 线（蜡烛图）数据，默认订阅**日 K 线**并仅保存**已收盘**的 K 线，通过 Kafka 写入 ClickHouse。
+
+**文档参考：**  
+[Individual Symbol Kline/Candlestick Streams](https://developers.binance.com/docs/derivatives/usds-margined-futures/websocket-market-streams/Kline-Candlestick-Streams)
+
+#### Kafka Topic 设计
+
+| Topic | 说明 |
+|-------|------|
+| `binance.kline.usdt_futures` | U 本位合约 K 线数据（默认日 K 线） |
+
+```bash
+# 订阅 BTCUSDT 日 K 线，打印到控制台（调试模式，默认仅收盘才打印）
+python -m binance_toolkit ws-kline-usdt --symbols BTCUSDT
+
+# 订阅多个合约日 K 线，发布到 Kafka（静默模式）
+python -m binance_toolkit ws-kline-usdt --symbols BTCUSDT,ETHUSDT,SOLUSDT --write-kafka --quiet
+
+# 订阅 1 小时 K 线，保存所有更新（含未收盘）
+python -m binance_toolkit ws-kline-usdt --symbols BTCUSDT --interval 1h --all-updates --write-kafka --quiet
+
+# 自定义 Kafka Topic
+python -m binance_toolkit ws-kline-usdt --symbols BTCUSDT --write-kafka --kafka-topic my.kline.topic
+
+# Ctrl+C 优雅停止
+```
+
+**参数说明：**
+
+| 参数 | 说明 |
+|------|------|
+| `--symbols` | 合约列表，逗号分隔（必填，默认 `BTCUSDT`） |
+| `--interval` | K 线间隔，默认 `1d`（日 K 线） |
+| `--all-updates` | 包含未收盘的 K 线更新；默认仅保存已收盘的 K 线 |
+| `--write-kafka` / `-k` | 发布到 Kafka |
+| `--kafka-topic` | Kafka Topic，默认 `binance.kline.usdt_futures` |
+| `--quiet` / `-q` | 不打印到控制台 |
+| `--batch-size` | 批量写入大小，默认 200 |
+| `--flush-interval` | 最长刷新间隔秒数，默认 2.0 |
+
+**支持的 K 线间隔：**  
+`1m` `3m` `5m` `15m` `30m` `1h` `2h` `4h` `6h` `8h` `12h` `1d` `3d` `1w` `1M`
+
+在代码中使用：
+
+```python
+from binance_toolkit.config import BinanceConfig
+from binance_toolkit.ws import UsdtKlineStream, UsdtKlineStreamWriter
+
+config = BinanceConfig.from_env()
+
+# 方式一: 仅打印/自定义处理（日K线，仅收盘触发）
+stream = UsdtKlineStream(
+    symbols=["BTCUSDT", "ETHUSDT"],
+    interval="1d",
+    on_message=lambda data: print(data),
+    closed_only=True,   # 仅在 K线收盘时触发回调
+)
+stream.run()
+
+# 方式二: 发布到 Kafka（日K线，仅收盘，静默）
+writer = UsdtKlineStreamWriter(
+    config,
+    symbols=["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"],
+    interval="1d",
+    closed_only=True,     # 仅保存已收盘的 K线
+    write_kafka=True,
+    enable_print=False,
+    batch_size=200,
+    flush_interval=2.0,
+)
+writer.run()
+
+# 方式三: 订阅 1h K线，保存所有更新
+writer = UsdtKlineStreamWriter(
+    config,
+    symbols=["BTCUSDT"],
+    interval="1h",
+    closed_only=False,    # 保存所有更新（含进行中的 K线）
+    write_kafka=True,
+    enable_print=True,
+)
+writer.run()
+```
+
+**Kafka 前置条件：**
+
+```bash
+pip install 'binance-toolkit[kafka]'
+```
+
+配置（config.json 或环境变量）：
+
+```json
+{
+  "kafka_bootstrap_servers": "localhost:9092",
+  "kafka_topic_kline_usdt": "binance.kline.usdt_futures"
+}
+```
+
+| 环境变量 | 说明 | 默认值 |
+|---------|------|--------|
+| `KAFKA_BOOTSTRAP_SERVERS` | Kafka 地址（逗号分隔） | — |
+| `KAFKA_TOPIC_KLINE_USDT` | K 线 Topic | `binance.kline.usdt_futures` |
+
+**Kafka 消息格式（每条消息 Key=symbol, Value=JSON）：**
+
+```json
+{
+  "symbol":                  "BTCUSDT",
+  "interval":                "1d",
+  "open_time":               1744848000000,
+  "close_time":              1744934399999,
+  "open":                    "83500.00",
+  "high":                    "85200.00",
+  "low":                     "82800.00",
+  "close":                   "84100.00",
+  "volume":                  "12345.678",
+  "quote_volume":            "1038245678.90",
+  "trade_count":             450000,
+  "taker_buy_volume":        "6200.000",
+  "taker_buy_quote_volume":  "521000000.00",
+  "is_closed":               true,
+  "event_time":              1744934400123,
+  "timestamp":               "2026-04-17T16:00:00.123000+00:00"
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `open_time` / `close_time` | K线开盘/收盘时间（毫秒时间戳） |
+| `open` / `high` / `low` / `close` | 开高低收价格（字符串，保持原始精度） |
+| `volume` | 成交量（基础资产，如 BTC 数量） |
+| `quote_volume` | 成交额（计价资产，如 USDT） |
+| `taker_buy_volume` | 主动买入成交量 |
+| `is_closed` | `true` 表示该 K 线已收盘，数据为最终状态 |
+
+**ClickHouse 建表参考（完整 DDL 见 `clickhouse_kline_setup.sql`）：**
+
+```sql
+-- 存储表（ReplacingMergeTree，用 event_time 去重保留最新状态）
+CREATE TABLE binance.usdt_kline
+(
+    symbol              LowCardinality(String),
+    interval            LowCardinality(String),
+    open_time           DateTime64(3, 'UTC'),          -- K线开盘时间
+    close_time          DateTime64(3, 'UTC'),          -- K线收盘时间
+    open                Decimal(28, 8),
+    high                Decimal(28, 8),
+    low                 Decimal(28, 8),
+    close               Decimal(28, 8),
+    volume              Decimal(28, 8),
+    quote_volume        Decimal(28, 8),
+    trade_count         Int64,
+    taker_buy_volume    Decimal(28, 8),
+    taker_buy_quote_volume Decimal(28, 8),
+    is_closed           Bool,
+    event_time          Int64,
+    timestamp           DateTime64(3, 'UTC'),
+    _insert_time        DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(event_time)
+PARTITION BY (toYYYYMM(open_time), interval)
+ORDER BY (symbol, interval, open_time);
+```
+
+> **注意：** 使用 `ReplacingMergeTree(event_time)` 是为了在同一根 K 线有多次更新时（例如 `closed_only=False` 模式下）自动保留最新的状态。查询时建议使用 `SELECT ... FINAL` 来获取去重后的结果。
+
+### 7.3 历史 K 线补全（REST API）
+
+通过 REST API (`GET /fapi/v1/klines`) 一次性拉取历史 K 线，支持自动分页和 Kafka 写入。
+数据写入同一个 Kafka Topic `binance.kline.usdt_futures`，进入相同的 ClickHouse 表。
+
+**文档参考：**  
+[Kline/Candlestick Data](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Kline-Candlestick-Data)
+
+```bash
+# 查询最近 500 条日K线（仅打印到控制台）
+python -m binance_toolkit fetch-klines --symbols BTCUSDT
+
+# 拉取指定日期范围（自动翻页）
+python -m binance_toolkit fetch-klines --symbols BTCUSDT --interval 1d --start 2024-01-01 --end 2025-01-01
+
+# 回填历史数据到 Kafka（静默模式）
+python -m binance_toolkit fetch-klines --symbols BTCUSDT,ETHUSDT --start 2024-01-01 --write-kafka --quiet
+
+# 多个合约、1小时K线、指定时间范围
+python -m binance_toolkit fetch-klines --symbols BTCUSDT,ETHUSDT,SOLUSDT --interval 1h --start 2025-01-01 --end 2025-04-01 --write-kafka --quiet
+
+# 打印 JSON 格式结果（调试）
+python -m binance_toolkit fetch-klines --symbols BTCUSDT --interval 1d --start 2025-12-01 --end 2026-01-01 --json
+```
+
+**参数说明：**
+
+| 参数 | 说明 |
+|------|------|
+| `--symbols` | 合约列表，逗号分隔（默认 `BTCUSDT`） |
+| `--interval` | K 线间隔，默认 `1d` |
+| `--start` | 起始时间，`YYYY-MM-DD` 或毫秒时间戳，省略则从最早数据开始 |
+| `--end` | 截止时间，`YYYY-MM-DD` 或毫秒时间戳，省略则到当前时间 |
+| `--write-kafka` / `-k` | 写入 Kafka |
+| `--kafka-topic` | 目标 Topic，默认 `binance.kline.usdt_futures` |
+| `--quiet` / `-q` | 不打印进度 |
+| `--json` | 将结果以 JSON 打印到控制台（调试用） |
+
+在代码中使用：
+
+```python
+from binance_toolkit.config import BinanceConfig
+from binance_toolkit.toolkit import BinanceToolkit
+from binance_toolkit.storage.kafka import KafkaStorage
+from datetime import datetime, timezone
+
+config = BinanceConfig.from_env()
+
+with BinanceToolkit(config) as tk:
+    # --- 一次性查询（返回 dict 列表）---
+    records = tk.futures_market.klines_as_records("BTCUSDT", "1d", limit=30)
+    for r in records:
+        print(r["open_time"], r["open"], r["close"])
+
+    # --- 分页拉取并写入 Kafka ---
+    kafka = KafkaStorage(config)
+    tk.futures_market.fetch_klines_range(
+        "BTCUSDT",
+        "1d",
+        start_time=int(datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp() * 1000),
+        end_time=int(datetime(2025, 1, 1, tzinfo=timezone.utc).timestamp() * 1000),
+        write_kafka=True,
+        kafka_storage=kafka,
+        kafka_topic=config.kafka_topic_kline_usdt,
+    )
+    kafka.close()
+
+    # --- 使用迭代器逐批处理（适合内存受限场景）---
+    for batch in tk.futures_market.iter_klines("ETHUSDT", "1h",
+                                               start_time=1704067200000):
+        print(f"本批 {len(batch)} 条, 首条={batch[0]['timestamp']}")
+        # 自行处理 batch ...
+```
+
+**`FuturesMarketAPI` 接口说明：**
+
+| 方法 | 说明 |
+|------|------|
+| `klines(symbol, interval, ...)` | 单次查询，返回原始列表（最多 1500 条） |
+| `klines_as_records(symbol, interval, ...)` | 单次查询，返回标准化 dict 列表 |
+| `iter_klines(symbol, interval, ...)` | 自动分页迭代器，按批 yield dict 列表 |
+| `fetch_klines_range(symbol, interval, ...)` | 全量拉取 + 可选 Kafka 写入，返回所有记录 |
+
+> **数据格式与实时流完全一致**，历史拉取的 K 线和 WebSocket 流的 K 线写入同一个 Kafka Topic 和 ClickHouse 表，无需额外建表。
+
 ### 8. 币本位合约基差数据查询
+
 
 查询特定合约基础交易对的基差历史数据，结果可写入 InfluxDB。
 

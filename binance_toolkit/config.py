@@ -14,6 +14,7 @@ from typing import Optional
 
 _DEFAULT_BASE_URL = "https://api.binance.com"
 _DEFAULT_DAPI_BASE_URL = "https://dapi.binance.com"
+_DEFAULT_FAPI_BASE_URL = "https://fapi.binance.com"
 _DEFAULT_FAPI_WS_URL = "wss://fstream.binance.com/ws"
 _DEFAULT_SPOT_WS_URL = "wss://ws-api.binance.com:443/ws-api/v3"
 _CONFIG_FILE_NAME = "config.json"
@@ -26,6 +27,7 @@ class BinanceConfig:
     api_key: str
     base_url: str = _DEFAULT_BASE_URL
     dapi_base_url: str = _DEFAULT_DAPI_BASE_URL
+    fapi_base_url: str = _DEFAULT_FAPI_BASE_URL
     fapi_ws_url: str = _DEFAULT_FAPI_WS_URL  # U本位合约 WebSocket 地址
     spot_ws_url: str = _DEFAULT_SPOT_WS_URL  # 现货 WebSocket API 地址
     private_key_path: Optional[str] = None
@@ -47,6 +49,7 @@ class BinanceConfig:
     kafka_topic_futures_trade: str = "binance.trade.usdt_futures"  # U本位合约交易结果 Topic
     kafka_topic_spot_trade: str = "binance.trade.spot"   # 现货交易结果 Topic
     kafka_topic_engine_events: str = "binance.engine.futures"      # 策略引擎审计 Topic
+    kafka_topic_kline_usdt: str = "binance.kline.usdt_futures"    # U本位合约 K线 Topic
 
     # ClickHouse signal source (策略引擎 Pull)
     clickhouse_signal_url: Optional[str] = None
@@ -126,6 +129,7 @@ class BinanceConfig:
             api_key=api_key,
             base_url=os.environ.get("BINANCE_BASE_URL", _DEFAULT_BASE_URL),
             dapi_base_url=os.environ.get("BINANCE_DAPI_BASE_URL", _DEFAULT_DAPI_BASE_URL),
+            fapi_base_url=os.environ.get("BINANCE_FAPI_BASE_URL", _DEFAULT_FAPI_BASE_URL),
             fapi_ws_url=os.environ.get("BINANCE_FAPI_WS_URL", _DEFAULT_FAPI_WS_URL),
             spot_ws_url=os.environ.get("BINANCE_SPOT_WS_URL", _DEFAULT_SPOT_WS_URL),
             private_key_path=os.environ.get("BINANCE_PRIVATE_KEY"),
@@ -143,6 +147,7 @@ class BinanceConfig:
             kafka_topic_futures_trade=os.environ.get("KAFKA_TOPIC_FUTURES_TRADE", "binance.trade.usdt_futures"),
             kafka_topic_spot_trade=os.environ.get("KAFKA_TOPIC_SPOT_TRADE", "binance.trade.spot"),
             kafka_topic_engine_events=os.environ.get("KAFKA_TOPIC_ENGINE_EVENTS", "binance.engine.futures"),
+            kafka_topic_kline_usdt=os.environ.get("KAFKA_TOPIC_KLINE_USDT", "binance.kline.usdt_futures"),
             clickhouse_signal_url=os.environ.get("CLICKHOUSE_SIGNAL_URL"),
             clickhouse_database=os.environ.get("CLICKHOUSE_DATABASE", "default"),
             clickhouse_user=os.environ.get("CLICKHOUSE_USER"),
@@ -183,6 +188,7 @@ class BinanceConfig:
             api_key=data["api_key"],
             base_url=data.get("base_url", _DEFAULT_BASE_URL),
             dapi_base_url=data.get("dapi_base_url", _DEFAULT_DAPI_BASE_URL),
+            fapi_base_url=data.get("fapi_base_url", _DEFAULT_FAPI_BASE_URL),
             fapi_ws_url=data.get("fapi_ws_url", _DEFAULT_FAPI_WS_URL),
             spot_ws_url=data.get("spot_ws_url", _DEFAULT_SPOT_WS_URL),
             private_key_path=data.get("private_key_path"),
@@ -200,6 +206,7 @@ class BinanceConfig:
             kafka_topic_futures_trade=data.get("kafka_topic_futures_trade", "binance.trade.usdt_futures"),
             kafka_topic_spot_trade=data.get("kafka_topic_spot_trade", "binance.trade.spot"),
             kafka_topic_engine_events=data.get("kafka_topic_engine_events", "binance.engine.futures"),
+            kafka_topic_kline_usdt=data.get("kafka_topic_kline_usdt", "binance.kline.usdt_futures"),
             clickhouse_signal_url=data.get("clickhouse_signal_url"),
             clickhouse_database=data.get("clickhouse_database", "default"),
             clickhouse_user=data.get("clickhouse_user"),

@@ -238,6 +238,106 @@ def _cmd_futures_pnl(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     )
 
 
+def _cmd_ws_kline_usdt(tk: BinanceToolkit, args: argparse.Namespace) -> None:
+    """启动 U 本位合约日 K 线 WebSocket 流."""
+    from .ws.usdt_kline_stream import run_usdt_kline_stream
+
+    symbols = [s.strip().upper() for s in args.symbols.split(",")]
+
+    write_kafka = args.write_kafka
+    config = tk._client.config if write_kafka else None
+
+    run_usdt_kline_stream(
+        symbols=symbols,
+        interval=args.interval,
+        closed_only=not args.all_updates,
+        config=config,
+        write_kafka=write_kafka,
+        enable_print=not args.quiet,
+        batch_size=args.batch_size,
+        flush_interval=args.flush_interval,
+        kafka_topic=args.kafka_topic,
+    )
+
+
+def _parse_datetime_to_ms(value: str | None) -> int | None:
+    """将 YYYY-MM-DD 或毫秒时间戳字符串解析为毫秒时间戳.
+
+    支持格式:
+      - 纯数字: 直接作为毫秒时间戳
+      - YYYY-MM-DD: UTC 0点
+      - YYYY-MM-DD HH:MM:SS: UTC 时间
+    """
+    if value is None:
+        return None
+    value = value.strip()
+    if value.isdigit():
+        return int(value)
+    from datetime import datetime, timezone
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(value, fmt).replace(tzinfo=timezone.utc)
+            return int(dt.timestamp() * 1000)
+        except ValueError:
+            continue
+    raise ValueError(
+        f"无法解析时间参数: {value!r}，支持格式: YYYY-MM-DD / YYYY-MM-DD HH:MM:SS / 毫秒时间戳"
+    )
+
+
+def _cmd_fetch_klines(tk: BinanceToolkit, args: argparse.Namespace) -> None:
+    """拉取 U本位合约历史 K线（REST API，支持分页 + Kafka 写入）."""
+    from datetime import datetime, timezone
+
+    symbols = [s.strip().upper() for s in args.symbols.split(",")]
+    start_ms = _parse_datetime_to_ms(args.start)
+    end_ms = _parse_datetime_to_ms(args.end)
+
+    kafka_storage = None
+    if args.write_kafka:
+        from .storage.kafka import KafkaStorage
+        kafka_storage = KafkaStorage(tk._client.config)
+
+    kafka_topic = args.kafka_topic or tk._client.config.kafka_topic_kline_usdt
+
+    if start_ms:
+        start_label = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+    else:
+        start_label = "最早"
+    if end_ms:
+        end_label = datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+    else:
+        end_label = "现在"
+
+    print(f"\n拉取 U本位合约历史 K线: interval={args.interval}, {start_label} ~ {end_label}")
+    print(f"合约({len(symbols)}): {', '.join(symbols)}\n")
+
+    try:
+        total = 0
+        for symbol in symbols:
+            records = tk.futures_market.fetch_klines_range(
+                symbol,
+                args.interval,
+                start_time=start_ms,
+                end_time=end_ms,
+                write_kafka=args.write_kafka,
+                kafka_storage=kafka_storage,
+                kafka_topic=kafka_topic,
+                enable_print=not args.quiet,
+            )
+            total += len(records)
+
+            if args.json and records:
+                import json
+                print(json.dumps(records, indent=2, ensure_ascii=False))
+    finally:
+        if kafka_storage:
+            kafka_storage.close()
+
+    if not args.quiet:
+        print(f"\n全部完成，共拉取 {total} 条 K线")
+
+
 def _cmd_engine_futures(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     """启动策略引擎（ClickHouse Pull -> U本位交易动作）."""
     from .engine import FuturesStrategyEngine
@@ -550,6 +650,84 @@ def build_parser() -> argparse.ArgumentParser:
         help="静默模式, 不打印到控制台",
     )
 
+    # ws-kline-usdt (U本位合约日 K 线 WebSocket 流)
+    p = sub.add_parser(
+        "ws-kline-usdt",
+        help="启动 U 本位合约 K 线 WebSocket 流（默认日 K 线，仅收盘蜡烛）",
+    )
+    p.add_argument(
+        "--symbols", default="BTCUSDT",
+        help="合约交易对, 多个用逗号分隔 (默认 BTCUSDT)",
+    )
+    p.add_argument(
+        "--interval", default="1d",
+        choices=["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w","1M"],
+        help="K 线间隔, 默认 1d",
+    )
+    p.add_argument(
+        "--all-updates", action="store_true",
+        help="保存所有 K 线更新（含未收盘），默认仅保存已收盘 K 线",
+    )
+    p.add_argument(
+        "--write-kafka", "-k", action="store_true",
+        help="将数据发布到 Kafka (需要配置 kafka_bootstrap_servers)",
+    )
+    p.add_argument(
+        "--kafka-topic", default="",
+        help="Kafka Topic 名称, 默认 binance.kline.usdt_futures",
+    )
+    p.add_argument(
+        "--quiet", "-q", action="store_true",
+        help="静默模式, 不打印到控制台",
+    )
+    p.add_argument(
+        "--batch-size", type=int, default=200,
+        help="批量写入大小, 默认 200 条",
+    )
+    p.add_argument(
+        "--flush-interval", type=float, default=2.0,
+        help="最长刷新间隔 (秒), 默认 2.0",
+    )
+
+    # fetch-klines (历史 K线拉取)
+    p = sub.add_parser(
+        "fetch-klines",
+        help="拉取 U本位合约历史 K线 (REST API, 支持分页 + Kafka 写入)",
+    )
+    p.add_argument(
+        "--symbols", default="BTCUSDT",
+        help="合约交易对, 多个用逗号分隔 (默认 BTCUSDT)",
+    )
+    p.add_argument(
+        "--interval", default="1d",
+        choices=["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w","1M"],
+        help="K 线间隔, 默认 1d",
+    )
+    p.add_argument(
+        "--start", default=None, metavar="DATE_OR_MS",
+        help="起始时间, 支持 YYYY-MM-DD / 毫秒时间戳, 省略则从最早数据开始",
+    )
+    p.add_argument(
+        "--end", default=None, metavar="DATE_OR_MS",
+        help="截止时间, 支持 YYYY-MM-DD / 毫秒时间戳, 省略则到当前时间",
+    )
+    p.add_argument(
+        "--write-kafka", "-k", action="store_true",
+        help="将 K线数据发布到 Kafka (需要配置 kafka_bootstrap_servers)",
+    )
+    p.add_argument(
+        "--kafka-topic", default="",
+        help="Kafka Topic, 默认 binance.kline.usdt_futures",
+    )
+    p.add_argument(
+        "--quiet", "-q", action="store_true",
+        help="静默模式, 不打印进度",
+    )
+    p.add_argument(
+        "--json", action="store_true",
+        help="将结果以 JSON 格式打印到控制台 (调试用)",
+    )
+
     # engine-futures (U本位合约策略引擎)
     p = sub.add_parser(
         "engine-futures",
@@ -657,6 +835,8 @@ _COMMAND_MAP = {
     "account-snapshot": _cmd_account_snapshot,
     "spot-pnl": _cmd_spot_pnl,
     "futures-pnl": _cmd_futures_pnl,
+    "ws-kline-usdt": _cmd_ws_kline_usdt,
+    "fetch-klines": _cmd_fetch_klines,
     "engine-futures": _cmd_engine_futures,
     "engine-spot": _cmd_engine_spot,
 }

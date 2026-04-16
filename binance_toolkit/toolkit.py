@@ -16,6 +16,7 @@ import dataclasses
 
 from .api.account import AccountAPI
 from .api.coin_futures import CoinFuturesMarketAPI
+from .api.futures_market import FuturesMarketAPI
 from .api.market import MarketAPI
 from .api.trade import TradeAPI
 from .api.user_data_stream import UserDataStreamAPI
@@ -50,9 +51,15 @@ class BinanceToolkit:
         self._dapi_client = BinanceClient(dapi_config)
         self.coin_futures = CoinFuturesMarketAPI(self._dapi_client)
 
+        # U本位合约使用独立的 FAPI base URL
+        fapi_config = dataclasses.replace(config, base_url=config.fapi_base_url)
+        self._fapi_client = BinanceClient(fapi_config)
+        self.futures_market = FuturesMarketAPI(self._fapi_client)
+
     def close(self) -> None:
         self._client.close()
         self._dapi_client.close()
+        self._fapi_client.close()
 
     def __enter__(self) -> "BinanceToolkit":
         return self
