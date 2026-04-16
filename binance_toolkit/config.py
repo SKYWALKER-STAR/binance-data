@@ -50,6 +50,7 @@ class BinanceConfig:
     kafka_topic_spot_trade: str = "binance.trade.spot"   # 现货交易结果 Topic
     kafka_topic_engine_events: str = "binance.engine.futures"      # 策略引擎审计 Topic
     kafka_topic_kline_usdt: str = "binance.kline.usdt_futures"    # U本位合约 K线 Topic
+    kafka_topic_oi_usdt: str = "binance.oi.usdt_futures"          # U本位合约 OI 统计 Topic
 
     # ClickHouse signal source (策略引擎 Pull)
     clickhouse_signal_url: Optional[str] = None
@@ -148,6 +149,7 @@ class BinanceConfig:
             kafka_topic_spot_trade=os.environ.get("KAFKA_TOPIC_SPOT_TRADE", "binance.trade.spot"),
             kafka_topic_engine_events=os.environ.get("KAFKA_TOPIC_ENGINE_EVENTS", "binance.engine.futures"),
             kafka_topic_kline_usdt=os.environ.get("KAFKA_TOPIC_KLINE_USDT", "binance.kline.usdt_futures"),
+            kafka_topic_oi_usdt=os.environ.get("KAFKA_TOPIC_OI_USDT", "binance.oi.usdt_futures"),
             clickhouse_signal_url=os.environ.get("CLICKHOUSE_SIGNAL_URL"),
             clickhouse_database=os.environ.get("CLICKHOUSE_DATABASE", "default"),
             clickhouse_user=os.environ.get("CLICKHOUSE_USER"),
@@ -207,6 +209,7 @@ class BinanceConfig:
             kafka_topic_spot_trade=data.get("kafka_topic_spot_trade", "binance.trade.spot"),
             kafka_topic_engine_events=data.get("kafka_topic_engine_events", "binance.engine.futures"),
             kafka_topic_kline_usdt=data.get("kafka_topic_kline_usdt", "binance.kline.usdt_futures"),
+            kafka_topic_oi_usdt=data.get("kafka_topic_oi_usdt", "binance.oi.usdt_futures"),
             clickhouse_signal_url=data.get("clickhouse_signal_url"),
             clickhouse_database=data.get("clickhouse_database", "default"),
             clickhouse_user=data.get("clickhouse_user"),

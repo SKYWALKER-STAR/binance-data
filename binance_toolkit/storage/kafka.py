@@ -121,6 +121,30 @@ class KafkaStorage:
         self._producer.flush()
         logger.debug("批量发布 %d 条 K线到 Topic [%s] 成功", len(records), topic)
 
+    def write_oi_batch(self, records: list[dict[str, Any]], topic: str) -> None:
+        """批量发布持仓量统计数据到 Kafka Topic.
+
+        每条消息以 symbol 作为消息 Key，value 为 JSON 格式的 OI 数据。
+
+        Args:
+            records: OI 记录列表，每个元素包含:
+                - symbol:                  合约交易对
+                - period:                  统计周期 (1h / 1d 等)
+                - sum_open_interest:       持仓量 (合约张数, 字符串)
+                - sum_open_interest_value: 持仓量价值 (USDT, 字符串)
+                - timestamp:               时间戳 (ms)
+                - timestamp_iso:           ISO8601 时间字符串
+            topic: 目标 Kafka Topic 名称
+        """
+        if not records:
+            return
+
+        for r in records:
+            self._producer.send(topic, key=r["symbol"], value=r)
+
+        self._producer.flush()
+        logger.debug("批量发布 %d 条 OI 统计到 Topic [%s] 成功", len(records), topic)
+
     def write_record(self, record: dict[str, Any], *, topic: str, key: str | None = None) -> None:
         """发布一条通用 JSON 记录到 Kafka Topic."""
         self._producer.send(topic, key=key, value=record)

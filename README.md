@@ -19,7 +19,7 @@ biannce-api/
 │       ├── base.py           # API 模块基类
 │       ├── market.py         # 现货市场数据 (公开, 无需签名)
 │       ├── coin_futures.py   # 币本位合约市场数据 (DAPI, 无需签名)
-│       ├── futures_market.py # U本位合约市场数据 (FAPI, 无需签名, 含历史K线)
+│       ├── futures_market.py # U本位合约市场数据 (FAPI, 无需签名, 含历史K线 / OI统计)
 │       ├── trade.py          # 现货交易 (需要签名)
 │       └── account.py        # 账户信息 (需要签名)
 │   ├── ws/                   # WebSocket 模块
@@ -142,6 +142,22 @@ python -m binance_toolkit fetch-klines --symbols BTCUSDT --interval 1d --start 2
 ```
 
 > **两者共用同一个 Kafka Topic `binance.kline.usdt_futures` 和 ClickHouse 表**，可以先用 `fetch-klines` 回填历史，再用 `ws-kline-usdt` 持续接收新K线，无缝衔接。
+
+#### 持仓量统计（REST API，近 1 个月）
+
+```bash
+# 拉取 BTCUSDT 最近 500 条 1h OI（打印到控制台）
+python -m binance_toolkit fetch-oi --symbols BTCUSDT
+
+# 拉取多个合约近 1 个月 OI，写入 Kafka
+python -m binance_toolkit fetch-oi --symbols BTCUSDT,ETHUSDT --write-kafka --quiet
+
+# 指定时间范围（注意仅保留最近 1 个月）
+python -m binance_toolkit fetch-oi --symbols BTCUSDT --period 1h --start 2026-03-20 --end 2026-04-16 --write-kafka --quiet
+
+# 拉取日级别 OI，打印 JSON（调试）
+python -m binance_toolkit fetch-oi --symbols BTCUSDT --period 1d --json
+```
 
 ---
 
@@ -729,6 +745,131 @@ with BinanceToolkit(config) as tk:
 | `fetch_klines_range(symbol, interval, ...)` | 全量拉取 + 可选 Kafka 写入，返回所有记录 |
 
 > **数据格式与实时流完全一致**，历史拉取的 K 线和 WebSocket 流的 K 线写入同一个 Kafka Topic 和 ClickHouse 表，无需额外建表。
+
+### 7.4 U 本位合约持仓量统计（OI Statistics）
+
+通过 REST API (`GET /futures/data/openInterestHist`) 获取 U 本位合约持仓量历史统计数据，支持自动分页和 Kafka 写入。
+
+> **注意：** Binance 接口仅保留最近 **1 个月**的 OI 数据，建议配置定时任务每天增量拉取。
+
+**文档参考：**  
+[Open Interest Statistics](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Open-Interest-Statistics)
+
+**数据字段：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `symbol` | String | 合约交易对，如 `BTCUSDT` |
+| `period` | String | 统计周期，如 `1h` / `1d` |
+| `sum_open_interest` | String | 持仓量（合约张数） |
+| `sum_open_interest_value` | String | 持仓量价值（USDT） |
+| `timestamp` | Int64 | 时间戳（毫秒） |
+| `timestamp_iso` | String | ISO8601 UTC 时间 |
+
+```bash
+# 拉取 BTCUSDT 近期 1h OI（打印到控制台）
+python -m binance_toolkit fetch-oi --symbols BTCUSDT
+
+# 拉取多个合约近 1 个月 1h OI，写入 Kafka
+python -m binance_toolkit fetch-oi --symbols BTCUSDT,ETHUSDT,SOLUSDT --write-kafka --quiet
+
+# 指定时间范围（仅近 1 个月内有效）
+python -m binance_toolkit fetch-oi --symbols BTCUSDT --period 1h --start 2026-03-20 --end 2026-04-16 --write-kafka --quiet
+
+# 拉取日级别 OI
+python -m binance_toolkit fetch-oi --symbols BTCUSDT --period 1d --write-kafka --quiet
+
+# 打印 JSON 格式结果（调试）
+python -m binance_toolkit fetch-oi --symbols BTCUSDT --period 1h --json
+```
+
+**参数说明：**
+
+| 参数 | 说明 |
+|------|------|
+| `--symbols` | 合约列表，逗号分隔（默认 `BTCUSDT`） |
+| `--period` | 统计周期，可选 `5m` / `15m` / `30m` / `1h` / `2h` / `4h` / `6h` / `12h` / `1d`，默认 `1h` |
+| `--start` | 起始时间，`YYYY-MM-DD` 或毫秒时间戳 |
+| `--end` | 截止时间，`YYYY-MM-DD` 或毫秒时间戳 |
+| `--write-kafka` / `-k` | 写入 Kafka |
+| `--kafka-topic` | 目标 Topic，默认 `binance.oi.usdt_futures` |
+| `--quiet` / `-q` | 不打印进度 |
+| `--json` | 将结果以 JSON 打印到控制台（调试用） |
+
+在代码中使用：
+
+```python
+from binance_toolkit.config import BinanceConfig
+from binance_toolkit.toolkit import BinanceToolkit
+from binance_toolkit.storage.kafka import KafkaStorage
+
+config = BinanceConfig.from_env()
+
+with BinanceToolkit(config) as tk:
+    # --- 单次查询（最多 500 条）---
+    records = tk.futures_market.open_interest_hist_as_records("BTCUSDT", "1h", limit=48)
+    for r in records:
+        print(r["timestamp_iso"], r["sum_open_interest"], r["sum_open_interest_value"])
+
+    # --- 全量拉取并写入 Kafka ---
+    kafka = KafkaStorage(config)
+    tk.futures_market.fetch_oi_range(
+        "BTCUSDT",
+        "1h",
+        write_kafka=True,
+        kafka_storage=kafka,
+        kafka_topic=config.kafka_topic_oi_usdt,
+    )
+    kafka.close()
+
+    # --- 使用迭代器逐批处理 ---
+    for batch in tk.futures_market.iter_open_interest("ETHUSDT", "1h"):
+        print(f"本批 {len(batch)} 条, 首条={batch[0]['timestamp_iso']}")
+```
+
+**`FuturesMarketAPI` OI 接口说明：**
+
+| 方法 | 说明 |
+|------|------|
+| `open_interest_hist(symbol, period, ...)` | 单次查询，返回原始 dict 列表（最多 500 条） |
+| `open_interest_hist_as_records(symbol, period, ...)` | 单次查询，返回标准化 dict 列表 |
+| `iter_open_interest(symbol, period, ...)` | 自动分页迭代器，按批 yield dict 列表 |
+| `fetch_oi_range(symbol, period, ...)` | 全量拉取 + 可选 Kafka 写入，返回所有记录 |
+
+**ClickHouse 建表参考（完整 DDL 见 `clickhouse_oi_setup.sql`）：**
+
+```sql
+-- 存储表
+CREATE TABLE IF NOT EXISTS binance.usdt_open_interest
+(
+    symbol                   LowCardinality(String),
+    period                   LowCardinality(String),
+    sum_open_interest        Decimal(28, 8),
+    sum_open_interest_value  Decimal(28, 8),
+    timestamp                Int64,
+    timestamp_iso            DateTime64(3, 'UTC'),
+    _insert_time             DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(timestamp)
+PARTITION BY (toYYYYMM(toDateTime(intDiv(timestamp, 1000))), period)
+ORDER BY (symbol, period, timestamp);
+
+-- Kafka 引擎表
+CREATE TABLE IF NOT EXISTS binance.kafka_oi_usdt ( ... )
+ENGINE = Kafka SETTINGS kafka_topic_list = 'binance.oi.usdt_futures', ...;
+
+-- Materialized View
+CREATE MATERIALIZED VIEW IF NOT EXISTS binance.oi_usdt_mv
+TO binance.usdt_open_interest AS
+SELECT symbol, period,
+       toDecimal128(sum_open_interest, 8), toDecimal128(sum_open_interest_value, 8),
+       timestamp, toDateTime64(timestamp / 1000, 3, 'UTC') AS timestamp_iso
+FROM binance.kafka_oi_usdt;
+```
+
+> 查询时使用 `SELECT ... FINAL` 或 `argMax` 聚合去重，完整 DDL（含查询示例）见 `clickhouse_oi_setup.sql`。
+
+---
 
 ### 8. 币本位合约基差数据查询
 

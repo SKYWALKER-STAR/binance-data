@@ -338,6 +338,60 @@ def _cmd_fetch_klines(tk: BinanceToolkit, args: argparse.Namespace) -> None:
         print(f"\n全部完成，共拉取 {total} 条 K线")
 
 
+def _cmd_fetch_oi(tk: BinanceToolkit, args: argparse.Namespace) -> None:
+    """拉取 U本位合约持仓量统计（REST API，支持分页 + Kafka 写入）."""
+    from datetime import datetime, timezone
+
+    symbols = [s.strip().upper() for s in args.symbols.split(",")]
+    start_ms = _parse_datetime_to_ms(args.start)
+    end_ms = _parse_datetime_to_ms(args.end)
+
+    kafka_storage = None
+    if args.write_kafka:
+        from .storage.kafka import KafkaStorage
+        kafka_storage = KafkaStorage(tk._client.config)
+
+    kafka_topic = args.kafka_topic or tk._client.config.kafka_topic_oi_usdt
+
+    if start_ms:
+        start_label = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+    else:
+        start_label = "最早"
+    if end_ms:
+        end_label = datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+    else:
+        end_label = "现在"
+
+    print(f"\n拉取 U本位合约持仓量统计: period={args.period}, {start_label} ~ {end_label}")
+    print(f"合约({len(symbols)}): {', '.join(symbols)}")
+    print("注意: Binance 仅保留最近 1 个月的数据\n")
+
+    try:
+        total = 0
+        for symbol in symbols:
+            records = tk.futures_market.fetch_oi_range(
+                symbol,
+                args.period,
+                start_time=start_ms,
+                end_time=end_ms,
+                write_kafka=args.write_kafka,
+                kafka_storage=kafka_storage,
+                kafka_topic=kafka_topic,
+                enable_print=not args.quiet,
+            )
+            total += len(records)
+
+            if args.json and records:
+                import json
+                print(json.dumps(records, indent=2, ensure_ascii=False))
+    finally:
+        if kafka_storage:
+            kafka_storage.close()
+
+    if not args.quiet:
+        print(f"\n全部完成，共拉取 {total} 条持仓量统计")
+
+
 def _cmd_engine_futures(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     """启动策略引擎（ClickHouse Pull -> U本位交易动作）."""
     from .engine import FuturesStrategyEngine
@@ -728,6 +782,45 @@ def build_parser() -> argparse.ArgumentParser:
         help="将结果以 JSON 格式打印到控制台 (调试用)",
     )
 
+    # fetch-oi (持仓量统计拉取)
+    p = sub.add_parser(
+        "fetch-oi",
+        help="拉取 U本位合约持仓量统计 (REST API, 支持分页 + Kafka 写入, 近 1 个月)",
+    )
+    p.add_argument(
+        "--symbols", default="BTCUSDT",
+        help="合约交易对, 多个用逗号分隔 (默认 BTCUSDT)",
+    )
+    p.add_argument(
+        "--period", default="1h",
+        choices=["5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"],
+        help="统计周期, 默认 1h",
+    )
+    p.add_argument(
+        "--start", default=None, metavar="DATE_OR_MS",
+        help="起始时间, 支持 YYYY-MM-DD / 毫秒时间戳, 省略则从最早可用数据开始",
+    )
+    p.add_argument(
+        "--end", default=None, metavar="DATE_OR_MS",
+        help="截止时间, 支持 YYYY-MM-DD / 毫秒时间戳, 省略则到当前时间",
+    )
+    p.add_argument(
+        "--write-kafka", "-k", action="store_true",
+        help="将 OI 数据发布到 Kafka (需要配置 kafka_bootstrap_servers)",
+    )
+    p.add_argument(
+        "--kafka-topic", default="",
+        help="Kafka Topic, 默认 binance.oi.usdt_futures",
+    )
+    p.add_argument(
+        "--quiet", "-q", action="store_true",
+        help="静默模式, 不打印进度",
+    )
+    p.add_argument(
+        "--json", action="store_true",
+        help="将结果以 JSON 格式打印到控制台 (调试用)",
+    )
+
     # engine-futures (U本位合约策略引擎)
     p = sub.add_parser(
         "engine-futures",
@@ -837,6 +930,7 @@ _COMMAND_MAP = {
     "futures-pnl": _cmd_futures_pnl,
     "ws-kline-usdt": _cmd_ws_kline_usdt,
     "fetch-klines": _cmd_fetch_klines,
+    "fetch-oi": _cmd_fetch_oi,
     "engine-futures": _cmd_engine_futures,
     "engine-spot": _cmd_engine_spot,
 }
