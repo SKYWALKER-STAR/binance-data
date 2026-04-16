@@ -89,6 +89,86 @@ SELECT
     toDateTime64(timestamp / 1000, 3, 'UTC') AS timestamp_iso
 FROM binance.kafka_oi_usdt;
 
+-- =========================================================
+-- 说明：为什么不用 Materialized View 来计算 OI 特征？
+--
+-- ClickHouse MV 的触发逻辑是「对当前 INSERT 批次执行一遍 SELECT」。
+-- 当 Kafka 消费者每次写入一批（甚至一条）记录时，lagInFrame 窗口函数
+-- 只能看到**本批次**的行，无法回溯历史数据，导致 prev_oi 永远是 NULL。
+--
+-- 正确做法：改用普通 VIEW，查询时扫全表，窗口函数才能跨历史行计算。
+-- 如需落盘特征数据（节省查询 CPU），可定期执行下方的手动刷新脚本。
+-- =========================================================
+
+
+-- ------------------------------------------------------------
+-- Step 5: 建普通视图（按需计算 OI 变化率特征）
+-- 注意：每次查询会扫描 usdt_open_interest FINAL，数据量大时加 WHERE 过滤
+-- ------------------------------------------------------------
+CREATE OR REPLACE VIEW binance.v_usdt_oi_features AS
+SELECT
+    symbol,
+    period,
+    timestamp,
+    timestamp_iso,
+    oi,
+    oi_value,
+    prev_oi,
+    prev_oi_value,
+    round((oi - prev_oi) / nullIf(prev_oi, 0) * 100, 4)       AS oi_change_pct,
+    round((oi_value - prev_oi_value) / nullIf(prev_oi_value, 0) * 100, 4) AS oi_value_change_pct
+FROM (
+    SELECT
+        symbol,
+        period,
+        timestamp,
+        timestamp_iso,
+        toFloat64(sum_open_interest)       AS oi,
+        toFloat64(sum_open_interest_value) AS oi_value,
+        lagInFrame(toFloat64(sum_open_interest)) OVER (
+            PARTITION BY symbol, period
+            ORDER BY timestamp
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS prev_oi,
+        lagInFrame(toFloat64(sum_open_interest_value)) OVER (
+            PARTITION BY symbol, period
+            ORDER BY timestamp
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS prev_oi_value
+    FROM binance.usdt_open_interest FINAL
+);
+
+
+-- ------------------------------------------------------------
+-- （可选）如需落盘特征数据，先建存储表，再定期手动刷新
+-- 适合数据量较大、查询频繁的场景
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS binance.usdt_oi_features
+(
+    symbol                LowCardinality(String),
+    period                LowCardinality(String),
+    timestamp             Int64,
+    timestamp_iso         DateTime64(3, 'UTC'),
+    oi                    Float64,
+    oi_value              Float64,
+    prev_oi               Float64,
+    prev_oi_value         Float64,
+    oi_change_pct         Float64,
+    oi_value_change_pct   Float64,
+    _insert_time          DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(timestamp)
+PARTITION BY (toYYYYMM(timestamp_iso), period)
+ORDER BY (symbol, period, timestamp);
+
+-- 手动刷新脚本（可放入 cron / ClickHouse Scheduled Query）：
+-- INSERT INTO binance.usdt_oi_features
+-- SELECT symbol, period, timestamp, timestamp_iso,
+--        oi, oi_value, prev_oi, prev_oi_value,
+--        oi_change_pct, oi_value_change_pct,
+--        now() AS _insert_time
+-- FROM binance.v_usdt_oi_features
+-- WHERE timestamp_iso >= now() - INTERVAL 2 DAY;  -- 增量刷新近 2 天
 
 -- ------------------------------------------------------------
 -- 常用查询示例
