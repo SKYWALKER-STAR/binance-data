@@ -238,6 +238,60 @@ def _cmd_futures_pnl(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     )
 
 
+def _cmd_futures_positions(tk: BinanceToolkit, args: argparse.Namespace) -> None:
+    """查询 U 本位合约当前持仓（通过 WebSocket API）."""
+    from .ws.futures_trade_ws import FuturesTradeWsClient
+    from .storage.kafka import KafkaStorage
+
+    config = tk._client.config
+    kafka_storage = None
+    if args.write_kafka:
+        kafka_storage = KafkaStorage(config)
+
+    kafka_topic = args.kafka_topic or "binance.position.usdt_futures"
+    symbol = args.symbol.strip().upper() if args.symbol else None
+
+    try:
+        with FuturesTradeWsClient(
+            config,
+            kafka_storage=kafka_storage,
+            kafka_topic=kafka_topic.replace(".position.", ".trade."),
+        ) as client:
+            positions = client.query_position(symbol=symbol)
+
+        # 过滤活跃持仓（positionAmt != 0）
+        active = [p for p in positions if float(p.get("positionAmt", 0)) != 0]
+
+        if not active:
+            print("当前无活跃持仓")
+            return
+
+        if args.json:
+            import json as _json
+            print(_json.dumps(active, indent=2, ensure_ascii=False))
+        else:
+            print(f"\n  {'合约':<16} {'方向':<8} {'数量':<18} {'开仓均价':<18} {'标记价格':<18} {'未实现盈亏':<18} {'杠杆':<6} {'保证金':<8} {'强平价格'}")
+            print("  " + "─" * 130)
+            for p in active:
+                pnl = float(p.get("unRealizedProfit", 0))
+                print(
+                    f"  {p.get('symbol',''):<16}"
+                    f" {p.get('positionSide',''):<8}"
+                    f" {p.get('positionAmt',''):<18}"
+                    f" {p.get('entryPrice',''):<18}"
+                    f" {p.get('markPrice',''):<18}"
+                    f" {pnl:+.4f}{'':10}"
+                    f" {p.get('leverage','')+'x':<6}"
+                    f" {p.get('marginType',''):<8}"
+                    f" {p.get('liquidationPrice','')}"
+                )
+            total_pnl = sum(float(p.get("unRealizedProfit", 0)) for p in active)
+            print(f"\n  合计未实现盈亏: {total_pnl:+.4f} USDT  (共 {len(active)} 个仓位)")
+    finally:
+        if kafka_storage:
+            kafka_storage.close()
+
+
 def _cmd_ws_kline_usdt(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     """启动 U 本位合约日 K 线 WebSocket 流."""
     from .ws.usdt_kline_stream import run_usdt_kline_stream
@@ -904,6 +958,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="静默模式, 不打印到控制台",
     )
 
+    # futures-positions (查询 U 本位合约持仓)
+    p = sub.add_parser(
+        "futures-positions",
+        help="查询 U 本位合约当前持仓 (WebSocket API, 需要签名配置)",
+    )
+    p.add_argument(
+        "--symbol", default=None,
+        help="指定合约交易对, 如 BTCUSDT。省略则返回所有活跃持仓",
+    )
+    p.add_argument(
+        "--write-kafka", "-k", action="store_true",
+        help="将持仓快照发布到 Kafka (需要配置 kafka_bootstrap_servers)",
+    )
+    p.add_argument(
+        "--kafka-topic", default="",
+        help="Kafka Topic, 默认 binance.position.usdt_futures",
+    )
+    p.add_argument(
+        "--json", action="store_true",
+        help="以 JSON 格式打印原始响应（调试用）",
+    )
+
     return parser
 
 
@@ -931,6 +1007,7 @@ _COMMAND_MAP = {
     "ws-kline-usdt": _cmd_ws_kline_usdt,
     "fetch-klines": _cmd_fetch_klines,
     "fetch-oi": _cmd_fetch_oi,
+    "futures-positions": _cmd_futures_positions,
     "engine-futures": _cmd_engine_futures,
     "engine-spot": _cmd_engine_spot,
 }

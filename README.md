@@ -103,11 +103,14 @@ python -m binance_toolkit basis --pair BTCUSD --contract-type CURRENT_QUARTER --
 # 查询所有永续合约的资金费率信息
 python -m binance_toolkit funding-info
 
+# 查询 U 本位合约当前持仓（需要 API Key + 签名配置）
+python -m binance_toolkit futures-positions
+
 # 查看帮助
 python -m binance_toolkit --help
 ```
 
-### 4. K 线数据快速命令
+### 4. K 线 & 持仓量快速命令
 
 #### 实时 K 线（WebSocket，仅收盘推送一次）
 
@@ -1631,6 +1634,28 @@ FROM binance_futures_trade_queue;
 
 通过 WebSocket API 查询当前 U 本位合约持仓信息，支持写入 Kafka。
 
+**命令行快速查询：**
+
+```bash
+# 查询所有活跃持仓（格式化表格输出）
+python -m binance_toolkit futures-positions
+
+# 查询指定合约，写入 Kafka
+python -m binance_toolkit futures-positions --symbol BTCUSDT --write-kafka
+
+# 打印原始 JSON（调试）
+python -m binance_toolkit futures-positions --json
+```
+
+| 参数 | 说明 |
+|------|------|
+| `--symbol` | 指定合约, 如 `BTCUSDT`; 省略则返回所有活跃持仓 |
+| `--write-kafka` / `-k` | 将持仓快照写入 Kafka |
+| `--kafka-topic` | 目标 Topic, 默认 `binance.position.usdt_futures` |
+| `--json` | 以 JSON 格式打印原始响应（调试） |
+
+**在代码中使用：**
+
 ```python
 from binance_toolkit.config import BinanceConfig
 from binance_toolkit.storage.kafka import KafkaStorage
@@ -1653,6 +1678,9 @@ with FuturesTradeWsClient(config, kafka_storage=kafka) as client:
     # --- 查询所有持仓 ---
     all_positions = client.query_position()
     print(f"共 {len(all_positions)} 个持仓")
+
+kafka.close()
+```
 
 kafka.close()
 ```
