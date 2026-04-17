@@ -140,6 +140,9 @@ class EngineStateStore:
                 """,
                 (SignalStatus.SENT, SignalStatus.ACKED, SignalStatus.FAILED, older_than_ms, limit),
             ).fetchall()
+        for r in rows:
+            logger.debug("reconcile candidate: signal_id=%s, symbol=%s, action=%s, order_id=%s, client_order_id=%s, status=%s, updated_at_ms=%s",
+                r["signal_id"], r["symbol"], r["action"], r["order_id"], r["client_order_id"], r["status"], r["updated_at_ms"])
         return [dict(r) for r in rows]
 
     def _init_schema(self) -> None:
