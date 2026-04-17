@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import TradingSignal
+logger = logging.getLogger("binance_toolkit.engine")
 
 
 class SignalStatus:
