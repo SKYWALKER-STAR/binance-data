@@ -164,8 +164,8 @@ SELECT
         if(adx_14 > 25 AND minus_di > plus_di, 'sell', 'none')
     )           AS side,
     'LIMIT'     AS order_type,
-    '0.005'     AS quantity,
-    (select mark_price from mark_price where symbol='ETHUSDT' order by timestamp desc limit 1) AS price,
+    '5'     AS quantity,
+    (select round(mark_price,0) from mark_price where symbol='ETHUSDT' order by timestamp desc limit 1) AS price,
     'GTC'       AS time_in_force,
     'BOTH'      AS position_side,
     'false'     AS reduce_only,
