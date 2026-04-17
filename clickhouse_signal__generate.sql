@@ -145,7 +145,7 @@ ORDER BY open_time;
 
 
 -- ------------------------------------------------------------
--- Step 3: 根据数据生成信号
+-- Step 3: 手动生成买入信号
 -- 注意：每次查询会扫描 usdt_kline FINAL，数据量大时加 WHERE 过滤
 -- ------------------------------------------------------------
 
@@ -172,4 +172,4 @@ SELECT
     'false'     AS close_position,
     rand()      AS order_id,
     rand()      AS client_order_id
-FROM binance.v_usdt_futures_regime where symbol = 'ETHUSDT' and interval = '1d' and open_time >= now() - INTERVAL 30 DAY limit 1;
+FROM binance.v_usdt_futures_regime where symbol = 'ETHUSDT' and interval = '1d' and open_time >= now() - INTERVAL 30 DAY order by open_time desc limit 1;

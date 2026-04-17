@@ -451,7 +451,7 @@ class BaseStrategyEngine(ABC):
                     },
                     metrics=self._metrics,
                 )
-                logger.exception("reconcile failed signal_id=%s", signal_id)
+                logger.exception("reconcile failed signal_id=%s order_id=%s", signal_id, row.get("order_id"))
 
     def _init_cursor(self) -> int:
         current = self._state.get_cursor_ms()
