@@ -1,0 +1,195 @@
+-- ============================================================
+-- ClickHouse 消费 Kafka 持仓量统计数据建表方案
+-- 适用数据来源: binance-toolkit fetch-oi
+-- 对应 Kafka Topic: binance.oi.usdt_futures
+-- 数据接口: GET /futures/data/openInterestHist (fapi.binance.com)
+--
+-- 整体架构:
+--   Kafka Topic (binance.oi.usdt_futures)
+--       ↓
+--   Kafka 引擎表  (消费入口，不持久化)
+--       ↓  (Materialized View 触发)
+--   MergeTree 存储表  (真正的持久化存储)
+-- ============================================================
+
+
+-- ------------------------------------------------------------
+-- Step 1: 建库
+-- ------------------------------------------------------------
+CREATE DATABASE IF NOT EXISTS binance;
+
+
+-- ------------------------------------------------------------
+-- Step 2: 建存储表 (MergeTree)
+-- 使用 ReplacingMergeTree，相同 (symbol, period, timestamp) 的行
+-- 以 timestamp 最大的为准（幂等写入，重复拉取不会产生脏数据）
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS binance.usdt_open_interest
+(
+    -- 唯一标识
+    symbol                   LowCardinality(String),     -- 合约交易对, 如 BTCUSDT
+    period                   LowCardinality(String),     -- 统计周期, 如 1h / 1d
+
+    -- 持仓量核心字段
+    sum_open_interest        Decimal(28, 8),             -- 持仓量 (合约张数)
+    sum_open_interest_value  Decimal(28, 8),             -- 持仓量价值 (USDT)
+
+    -- 时间字段
+    timestamp                Int64,                      -- 原始时间戳 (ms), 用于排序和去重
+    timestamp_iso            DateTime64(3, 'UTC'),       -- UTC 时间
+
+    _insert_time             DateTime DEFAULT now()      -- 写入时间，用于排查延迟
+)
+ENGINE = ReplacingMergeTree(timestamp)
+PARTITION BY (toYYYYMM(toDateTime(intDiv(timestamp, 1000))), period)
+ORDER BY (symbol, period, timestamp)
+TTL toDateTime(intDiv(timestamp, 1000)) + INTERVAL 1 YEAR  -- Binance 只提供近 1 个月, 可按需调整
+SETTINGS index_granularity = 8192;
+
+-- 设计要点:
+--   ReplacingMergeTree(timestamp) — 保留 timestamp 最大的行（幂等，防止重复写入）
+--   ORDER BY (symbol, period, timestamp) — 按合约+周期+时间点唯一确定一条记录
+--   PARTITION BY (toYYYYMM, period) — 方便按月和周期分区管理
+--   查询去重: SELECT ... FINAL 或使用 max(timestamp) GROUP BY
+
+
+-- ------------------------------------------------------------
+-- Step 3: 建 Kafka 引擎表（消费入口，不存储数据）
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS binance.kafka_oi_usdt
+(
+    symbol                   String,
+    period                   String,
+    sum_open_interest        String,          -- 保留字符串精度，物化视图中转换
+    sum_open_interest_value  String,
+    timestamp                Int64,           -- ms 时间戳
+    timestamp_iso            Nullable(String) -- ISO8601 字符串，可为 null
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list           = 'localhost:9092',
+    kafka_topic_list            = 'binance.oi.usdt_futures',
+    kafka_group_name            = 'clickhouse_oi_usdt',
+    kafka_format                = 'JSONEachRow',
+    kafka_num_consumers         = 1,
+    kafka_skip_broken_messages  = 10;
+
+
+-- ------------------------------------------------------------
+-- Step 4: 建 Materialized View（Kafka 引擎表 → MergeTree 存储表）
+-- ------------------------------------------------------------
+CREATE MATERIALIZED VIEW IF NOT EXISTS binance.oi_usdt_mv
+TO binance.usdt_open_interest AS
+SELECT
+    symbol,
+    period,
+    toDecimal128(sum_open_interest, 8)       AS sum_open_interest,
+    toDecimal128(sum_open_interest_value, 8) AS sum_open_interest_value,
+    timestamp,
+    toDateTime64(timestamp / 1000, 3, 'UTC') AS timestamp_iso
+FROM binance.kafka_oi_usdt;
+
+-- =========================================================
+-- 说明：为什么不用 Materialized View 来计算 OI 特征？
+--
+-- ClickHouse MV 的触发逻辑是「对当前 INSERT 批次执行一遍 SELECT」。
+-- 当 Kafka 消费者每次写入一批（甚至一条）记录时，lagInFrame 窗口函数
+-- 只能看到**本批次**的行，无法回溯历史数据，导致 prev_oi 永远是 NULL。
+--
+-- 正确做法：改用普通 VIEW，查询时扫全表，窗口函数才能跨历史行计算。
+-- 如需落盘特征数据（节省查询 CPU），可定期执行下方的手动刷新脚本。
+-- =========================================================
+
+
+-- ------------------------------------------------------------
+-- Step 5: 建普通视图（按需计算 OI 变化率特征）
+-- 注意：每次查询会扫描 usdt_open_interest FINAL，数据量大时加 WHERE 过滤
+-- ------------------------------------------------------------
+CREATE OR REPLACE VIEW binance.v_usdt_oi_features AS
+SELECT
+    symbol,
+    period,
+    timestamp,
+    timestamp_iso,
+    oi,
+    oi_value,
+    prev_oi,
+    prev_oi_value,
+    round((oi - prev_oi) / nullIf(prev_oi, 0) * 100, 4)       AS oi_change_pct,
+    round((oi_value - prev_oi_value) / nullIf(prev_oi_value, 0) * 100, 4) AS oi_value_change_pct
+FROM (
+    SELECT
+        symbol,
+        period,
+        timestamp,
+        timestamp_iso,
+        toFloat64(sum_open_interest)       AS oi,
+        toFloat64(sum_open_interest_value) AS oi_value,
+        lagInFrame(toFloat64(sum_open_interest)) OVER (
+            PARTITION BY symbol, period
+            ORDER BY timestamp
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS prev_oi,
+        lagInFrame(toFloat64(sum_open_interest_value)) OVER (
+            PARTITION BY symbol, period
+            ORDER BY timestamp
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS prev_oi_value
+    FROM binance.usdt_open_interest FINAL
+);
+
+
+-- ------------------------------------------------------------
+-- （可选）如需落盘特征数据，先建存储表，再定期手动刷新
+-- 适合数据量较大、查询频繁的场景
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS binance.usdt_oi_features
+(
+    symbol                LowCardinality(String),
+    period                LowCardinality(String),
+    timestamp             Int64,
+    timestamp_iso         DateTime64(3, 'UTC'),
+    oi                    Float64,
+    oi_value              Float64,
+    prev_oi               Float64,
+    prev_oi_value         Float64,
+    oi_change_pct         Float64,
+    oi_value_change_pct   Float64,
+    _insert_time          DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(timestamp)
+PARTITION BY (toYYYYMM(timestamp_iso), period)
+ORDER BY (symbol, period, timestamp);
+
+-- 手动刷新脚本（可放入 cron / ClickHouse Scheduled Query）：
+-- INSERT INTO binance.usdt_oi_features
+-- SELECT symbol, period, timestamp, timestamp_iso,
+--        oi, oi_value, prev_oi, prev_oi_value,
+--        oi_change_pct, oi_value_change_pct,
+--        now() AS _insert_time
+-- FROM binance.v_usdt_oi_features
+-- WHERE timestamp_iso >= now() - INTERVAL 2 DAY;  -- 增量刷新近 2 天
+
+-- ------------------------------------------------------------
+-- 常用查询示例
+-- ------------------------------------------------------------
+
+-- 查询最新持仓量（去重）
+-- SELECT symbol, period, sum_open_interest, sum_open_interest_value, timestamp_iso
+-- FROM binance.usdt_open_interest FINAL
+-- WHERE symbol = 'BTCUSDT' AND period = '1h'
+-- ORDER BY timestamp DESC
+-- LIMIT 48;
+
+-- 按天聚合（以每天最后一条为准）
+-- SELECT
+--     toDate(timestamp_iso) AS date,
+--     symbol,
+--     argMax(sum_open_interest, timestamp)       AS oi_at_close,
+--     argMax(sum_open_interest_value, timestamp) AS oi_value_at_close
+-- FROM binance.usdt_open_interest FINAL
+-- WHERE symbol IN ('BTCUSDT', 'ETHUSDT')
+--   AND period = '1h'
+--   AND timestamp_iso >= toDateTime('2026-01-01 00:00:00')
+-- GROUP BY date, symbol
+-- ORDER BY date DESC, symbol;

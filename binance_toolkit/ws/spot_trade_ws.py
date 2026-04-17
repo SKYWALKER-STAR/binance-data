@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 import threading
 import time
 import urllib.parse
@@ -45,6 +46,12 @@ _DEFAULT_TIMEOUT = 10
 
 # WebSocket 重连最大等待秒数
 _MAX_RECONNECT_WAIT = 60
+
+# recv 读取超时秒数（长于请求超时，留给心跳检测用）
+_RECV_TIMEOUT = 30
+
+# Binance 要求每 3 分钟发一次 ping，否则服务端会关闭连接
+_PING_INTERVAL = 150
 
 
 class SpotTradeWsClient:
@@ -104,6 +111,7 @@ class SpotTradeWsClient:
         self._lock = threading.Lock()                     # 保护 ws 写操作
         self._pending: dict[str, _PendingRequest] = {}   # id -> 待处理请求
         self._recv_thread: Optional[threading.Thread] = None
+        self._ping_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._connected = threading.Event()
 
@@ -268,6 +276,8 @@ class SpotTradeWsClient:
                 pass
         if self._recv_thread and self._recv_thread.is_alive():
             self._recv_thread.join(timeout=5)
+        if self._ping_thread and self._ping_thread.is_alive():
+            self._ping_thread.join(timeout=5)
         logger.info("SpotTradeWsClient 已关闭")
 
     def __enter__(self) -> "SpotTradeWsClient":
@@ -281,12 +291,14 @@ class SpotTradeWsClient:
     # ------------------------------------------------------------------
 
     def _connect(self) -> None:
-        """建立 WebSocket 连接，启动接收线程."""
+        """建立 WebSocket 连接，启动接收线程和心跳线程."""
         self._connected.clear()
         attempt = 0
         while not self._stop_event.is_set():
             try:
                 ws = websocket.create_connection(self._ws_url, timeout=self._timeout)
+                # 连接成功后将 socket 读超时调大，避免空闲时 recv() 误报超时
+                ws.sock.settimeout(_RECV_TIMEOUT)
                 self._ws = ws
                 self._connected.set()
                 logger.info("已连接 Binance 现货 WebSocket: %s", self._ws_url)
@@ -297,6 +309,13 @@ class SpotTradeWsClient:
                     name="spot-trade-ws-recv",
                 )
                 self._recv_thread.start()
+                # 启动心跳线程（每 150 秒发一次 ping，防止服务端断开）
+                self._ping_thread = threading.Thread(
+                    target=self._ping_loop,
+                    daemon=True,
+                    name="spot-trade-ws-ping",
+                )
+                self._ping_thread.start()
                 return
             except Exception as exc:
                 wait = min(2 ** attempt, _MAX_RECONNECT_WAIT)
@@ -322,10 +341,26 @@ class SpotTradeWsClient:
                 self._connected.clear()
                 self._connect()
                 break
+            except (websocket.WebSocketTimeoutException, socket.timeout, TimeoutError):
+                # recv 在空闲窗口内未收到消息，属于正常情况，继续等待
+                logger.debug("[recv] 读取超时（无新消息），继续等待")
+                continue
             except Exception as exc:
                 if self._stop_event.is_set():
                     break
                 logger.error("接收消息时出错: %s", exc)
+
+    def _ping_loop(self) -> None:
+        """后台心跳线程：定期发送 ping 防止服务端因空闲关闭连接."""
+        while not self._stop_event.wait(_PING_INTERVAL):
+            if not self._connected.is_set():
+                continue
+            try:
+                with self._lock:
+                    self._ws.ping()  # type: ignore[union-attr]
+                logger.debug("[ping] 心跳已发送")
+            except Exception as exc:
+                logger.warning("[ping] 心跳发送失败: %s", exc)
 
     def _sign_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """为 WebSocket 请求参数注入 apiKey、timestamp、recvWindow 并签名.
