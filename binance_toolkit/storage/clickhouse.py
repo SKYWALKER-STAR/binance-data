@@ -97,6 +97,14 @@ class ClickHousePositionStorage:
     # 私有方法
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _fmt_dt(dt: datetime) -> str:
+        """将 UTC datetime 格式化为 ClickHouse DateTime64 可接受的字符串.
+
+        ClickHouse JSONEachRow 要求: "2026-04-20 10:11:07.288"（空格，无时区后缀）
+        """
+        return dt.strftime("%Y-%m-%d %H:%M:%S.") + f"{dt.microsecond // 1000:03d}"
+
     def _to_row(self, pos: dict[str, Any], queried_at: datetime) -> dict[str, Any]:
         update_time_ms: int | None = pos.get("updateTime")
         updated_at: Optional[datetime] = None
@@ -124,10 +132,8 @@ class ClickHousePositionStorage:
             "bid_notional":              pos.get("bidNotional", "0"),
             "ask_notional":              pos.get("askNotional", "0"),
             "update_time":               update_time_ms or 0,
-            "updated_at":                (
-                updated_at.isoformat() if updated_at else queried_at.isoformat()
-            ),
-            "queried_at":                queried_at.isoformat(),
+            "updated_at":                self._fmt_dt(updated_at if updated_at else queried_at),
+            "queried_at":                self._fmt_dt(queried_at),
         }
 
     def _execute(self, sql: str) -> None:
