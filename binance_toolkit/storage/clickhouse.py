@@ -138,4 +138,7 @@ class ClickHousePositionStorage:
             auth=self._auth,
             timeout=self._timeout,
         )
-        resp.raise_for_status()
+        if not resp.ok:
+            raise RuntimeError(
+                f"ClickHouse HTTP {resp.status_code}: {resp.text.strip()}"
+            )
