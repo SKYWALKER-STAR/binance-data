@@ -242,11 +242,22 @@ def _cmd_futures_positions(tk: BinanceToolkit, args: argparse.Namespace) -> None
     """查询 U 本位合约当前持仓（通过 WebSocket API）."""
     from .ws.futures_trade_ws import FuturesTradeWsClient
     from .storage.kafka import KafkaStorage
+    from .storage.clickhouse import ClickHousePositionStorage
 
     config = tk._client.config
     kafka_storage = None
+    ch_storage = None
+
     if args.write_kafka:
         kafka_storage = KafkaStorage(config)
+    if args.write_clickhouse:
+        ch_storage = ClickHousePositionStorage(
+            url=config.clickhouse_signal_url or "",
+            database=config.clickhouse_database,
+            user=config.clickhouse_user,
+            password=config.clickhouse_password,
+            timeout=config.clickhouse_timeout,
+        )
 
     kafka_topic = args.kafka_topic or "binance.position.usdt_futures"
     symbol = args.symbol.strip().upper() if args.symbol else None
@@ -258,6 +269,11 @@ def _cmd_futures_positions(tk: BinanceToolkit, args: argparse.Namespace) -> None
             kafka_topic=kafka_topic.replace(".position.", ".trade."),
         ) as client:
             positions = client.query_position(symbol=symbol)
+
+        # ClickHouse 直写：TRUNCATE + INSERT 活跃持仓
+        if ch_storage is not None:
+            from datetime import datetime, timezone
+            ch_storage.write_current_positions(positions, queried_at=datetime.now(timezone.utc))
 
         # 过滤活跃持仓（positionAmt != 0）
         active = [p for p in positions if float(p.get("positionAmt", 0)) != 0]
@@ -290,6 +306,8 @@ def _cmd_futures_positions(tk: BinanceToolkit, args: argparse.Namespace) -> None
     finally:
         if kafka_storage:
             kafka_storage.close()
+        if ch_storage:
+            ch_storage.close()
 
 
 def _cmd_ws_kline_usdt(tk: BinanceToolkit, args: argparse.Namespace) -> None:
@@ -974,6 +992,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--kafka-topic", default="",
         help="Kafka Topic, 默认 binance.position.usdt_futures",
+    )
+    p.add_argument(
+        "--write-clickhouse", "-c", action="store_true",
+        help="将当前持仓写入 ClickHouse (TRUNCATE + INSERT, 需要配置 clickhouse_signal_url)",
     )
     p.add_argument(
         "--json", action="store_true",
