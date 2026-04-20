@@ -659,23 +659,25 @@ class FuturesTradeWsClient:
 
         result: list[dict] = response["result"]
 
-        # 过滤有效持仓 (positionAmt != 0)
-        active_positions = [
-            pos for pos in result
-            if float(pos.get("positionAmt", 0)) != 0
-        ]
+        active_count = sum(
+            1 for pos in result if float(pos.get("positionAmt", 0)) != 0
+        )
 
         logger.info(
-            "[query_position] 查询到 %d 个持仓 (总 %d 条), queried_at=%s",
-            len(active_positions),
+            "[query_position] 查询到 %d 个活跃持仓 (总 %d 条), queried_at=%s",
+            active_count,
             len(result),
             queried_at.isoformat(),
         )
 
-        # 写入 Kafka (仅有效持仓)
-        if self._kafka is not None and active_positions:
+        # 写入 Kafka (全量持仓，包含 positionAmt=0 的已平仓记录)
+        # 全量写入是"数据库与实际持仓保持一致"的关键：
+        #   - 平仓后 Binance 仍会返回该仓位，positionAmt="0"
+        #   - 零仓位记录写入后，ClickHouse ReplacingMergeTree 以 queried_at 为版本覆盖旧记录
+        #   - 查询视图过滤 positionAmt != 0，DB 与实际持仓始终一致
+        if self._kafka is not None and result:
             self._kafka.write_futures_position(
-                active_positions,
+                result,
                 queried_at=queried_at,
                 topic=self._kafka_topic.replace(".trade.", ".position."),
             )

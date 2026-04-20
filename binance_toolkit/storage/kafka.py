@@ -486,13 +486,17 @@ class KafkaStorage:
         queried_at: datetime,
         topic: str = "binance.position.usdt_futures",
     ) -> None:
-        """发布 U 本位合约持仓信息到 Kafka Topic.
+        """发布 U 本位合约全量持仓快照到 Kafka Topic.
 
         每条消息以 ``symbol:positionSide`` 作为 Key，包含完整的持仓快照。
+        传入列表应为 Binance 返回的**全量**持仓（含 positionAmt=0 的已平仓记录），
+        而非仅过滤后的活跃持仓。这样 ClickHouse 侧的 ReplacingMergeTree 才能
+        在后台 merge 时用零仓位记录覆盖旧版本，确保数据库与实际持仓始终一致。
 
         Args:
-            positions: Binance WebSocket API 返回的持仓信息列表（仅有效持仓）。
-            queried_at: 查询发起时间（本地记录的 UTC datetime）。
+            positions: Binance WebSocket API 返回的全量持仓列表（含已平仓记录）。
+            queried_at: 查询发起时间（本地记录的 UTC datetime），同时作为
+                        ReplacingMergeTree 的版本号。
             topic:     目标 Kafka Topic，默认 ``"binance.position.usdt_futures"``。
         """
         if not positions:

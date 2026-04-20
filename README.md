@@ -1634,14 +1634,33 @@ FROM binance_futures_trade_queue;
 
 通过 WebSocket API 查询当前 U 本位合约持仓信息，支持写入 Kafka。
 
+**设计原则：数据库与实际持仓始终保持一致**
+
+每次写入 Kafka 时会推送 **全量持仓快照**（包括 `positionAmt = "0"` 的已平仓记录）。
+ClickHouse 存储表使用 `ReplacingMergeTree(queried_at)` 引擎，排序键为 `(symbol, position_side)`（不含时间维度），
+这样同一个仓位的新写入会在后台 merge 时覆盖旧记录。
+"当前持仓"视图在查询时过滤掉 `position_amt = 0` 的记录，最终结果与实际持仓一致，不多也不少。
+
+| 场景 | Binance 返回 | Kafka 写入 | ClickHouse 视图结果 |
+|------|------------|-----------|-------------------|
+| 开新仓 BTCUSDT | `positionAmt = "0.1"` | 写入非零记录 | 可见 |
+| 仓位数量变化 | `positionAmt = "0.2"` | 写入新版本，覆盖旧记录 | 显示最新数量 |
+| 平仓 BTCUSDT | `positionAmt = "0"` | 写入零仓位记录（版本更新） | 被视图过滤，消失 |
+| 完全无持仓 | 全部为零 | 写入全零记录 | 视图为空 |
+
+> **注意：** `--symbol` 参数仅用于控制台展示。如果需要将持仓数据同步到数据库，**必须不带 `--symbol` 参数**进行全量查询，否则只能感知到指定合约的状态变化，无法检测其他合约的平仓事件。
+
 **命令行快速查询：**
 
 ```bash
 # 查询所有活跃持仓（格式化表格输出）
 python -m binance_toolkit futures-positions
 
-# 查询指定合约，写入 Kafka
-python -m binance_toolkit futures-positions --symbol BTCUSDT --write-kafka
+# 全量持仓快照写入 Kafka（与数据库同步，推荐生产使用）
+python -m binance_toolkit futures-positions --write-kafka --quiet
+
+# 仅查看指定合约（调试/控制台展示，不影响数据库同步）
+python -m binance_toolkit futures-positions --symbol BTCUSDT
 
 # 打印原始 JSON（调试）
 python -m binance_toolkit futures-positions --json
@@ -1649,10 +1668,11 @@ python -m binance_toolkit futures-positions --json
 
 | 参数 | 说明 |
 |------|------|
-| `--symbol` | 指定合约, 如 `BTCUSDT`; 省略则返回所有活跃持仓 |
-| `--write-kafka` / `-k` | 将持仓快照写入 Kafka |
-| `--kafka-topic` | 目标 Topic, 默认 `binance.position.usdt_futures` |
+| `--symbol` | 指定合约（如 `BTCUSDT`）筛选控制台输出；**数据库同步时请勿指定此参数** |
+| `--write-kafka` / `-k` | 将全量持仓快照写入 Kafka |
+| `--kafka-topic` | 目标 Topic，默认 `binance.position.usdt_futures` |
 | `--json` | 以 JSON 格式打印原始响应（调试） |
+| `--quiet` / `-q` | 不打印到控制台 |
 
 **在代码中使用：**
 
@@ -1666,21 +1686,19 @@ kafka = KafkaStorage(config)
 
 with FuturesTradeWsClient(config, kafka_storage=kafka) as client:
 
-    # --- 查询指定交易对持仓 ---
+    # --- 全量查询（用于数据库同步，不传 symbol）---
+    # 写入 Kafka，包含所有持仓（含 positionAmt=0 的已平仓记录）
+    all_positions = client.query_position()
+    active = [p for p in all_positions if float(p.get("positionAmt", 0)) != 0]
+    print(f"活跃持仓 {len(active)} 个（共查询 {len(all_positions)} 条）")
+
+    # --- 查询指定交易对（仅用于展示，不适合数据库同步）---
     positions = client.query_position(symbol="BTCUSDT")
     for pos in positions:
         print(f"{pos['symbol']} {pos['positionSide']}: "
               f"数量={pos['positionAmt']}, "
               f"开仓价={pos['entryPrice']}, "
-              f"标记价={pos['markPrice']}, "
               f"未实现盈亏={pos['unRealizedProfit']}")
-
-    # --- 查询所有持仓 ---
-    all_positions = client.query_position()
-    print(f"共 {len(all_positions)} 个持仓")
-
-kafka.close()
-```
 
 kafka.close()
 ```
@@ -1689,7 +1707,7 @@ kafka.close()
 
 | Topic | 说明 |
 |-------|------|
-| `binance.position.usdt_futures` | U 本位合约持仓快照 |
+| `binance.position.usdt_futures` | U 本位合约全量持仓快照（含零仓位） |
 
 #### 持仓消息格式（Key=symbol:positionSide, Value=JSON）
 
@@ -1724,12 +1742,12 @@ kafka.close()
 
 | 字段 | 说明 |
 |------|------|
-| `position_amt` | 持仓数量（正为多仓，负为空仓）|
+| `position_amt` | 持仓数量（正为多仓，负为空仓，`"0"` 表示已平仓）|
 | `entry_price` | 开仓均价 |
 | `mark_price` | 当前标记价格 |
 | `unrealized_profit` | 未实现盈亏 |
-| `liquidation_price` | 强平价格（全仓模式为 "0"）|
-| `queried_at` | **查询发起时间** — 客户端发送请求前记录的本地 UTC 时间 |
+| `liquidation_price` | 强平价格（全仓模式为 `"0"`）|
+| `queried_at` | **查询发起时间** — 作为 `ReplacingMergeTree` 的版本号，值越新的记录越优先保留 |
 | `updated_at` | **持仓更新时间** — 来自 Binance 响应中的 `updateTime` 字段 |
 
 #### ClickHouse 持仓表建表参考
@@ -1770,6 +1788,10 @@ SETTINGS
     kafka_format      = 'JSONEachRow';
 
 -- 持久化表
+-- 核心设计：
+--   ReplacingMergeTree(queried_at) — 以查询时间作为版本号，同一仓位的新快照覆盖旧快照
+--   ORDER BY (symbol, position_side) — 不含时间维度，确保同一仓位只保留最新一条
+--   TTL queried_at + INTERVAL 7 DAY — 自动清理 7 天前的历史版本，防止旧数据堆积
 CREATE TABLE binance_futures_position
 (
     symbol                     LowCardinality(String),
@@ -1796,8 +1818,17 @@ CREATE TABLE binance_futures_position
     queried_at                 DateTime64(6, 'UTC'),
     recorded_at                DateTime64(6, 'UTC')
 )
-ENGINE = MergeTree
-ORDER BY (symbol, position_side, recorded_at);
+ENGINE = ReplacingMergeTree(queried_at)
+ORDER BY (symbol, position_side)
+TTL toDate(queried_at) + INTERVAL 7 DAY;
+
+-- 当前持仓视图（与实际持仓实时一致）
+-- FINAL：强制 ClickHouse 在查询时执行去重，返回每个 (symbol, position_side) 的最新记录
+-- WHERE position_amt != 0：过滤掉已平仓的零仓位记录
+CREATE OR REPLACE VIEW v_current_futures_position AS
+SELECT *
+FROM binance_futures_position FINAL
+WHERE position_amt != 0;
 
 -- Materialized View（消费队列 → 持久化）
 CREATE MATERIALIZED VIEW binance_futures_position_mv TO binance_futures_position AS
@@ -1827,6 +1858,27 @@ SELECT
     parseDateTimeBestEffort(ifNull(recorded_at,''))       AS recorded_at
 FROM binance_futures_position_queue;
 ```
+
+#### 查询当前持仓
+
+```sql
+-- 查看当前所有活跃持仓（与实际持仓一致）
+SELECT symbol, position_side, position_amt, entry_price, mark_price, unrealized_profit, queried_at
+FROM v_current_futures_position
+ORDER BY symbol;
+
+-- 若未创建视图，直接查询时需加 FINAL 并过滤零仓位
+SELECT symbol, position_side, position_amt, entry_price, unrealized_profit
+FROM binance_futures_position FINAL
+WHERE position_amt != 0
+ORDER BY symbol;
+
+-- 手动触发后台合并（可选，减少存储占用）
+OPTIMIZE TABLE binance_futures_position FINAL;
+```
+
+> **为什么要用 `FINAL`？** `ReplacingMergeTree` 的去重发生在后台 merge 时，不是实时的。
+> 不加 `FINAL` 可能看到同一仓位的多个历史版本。生产环境查询时始终使用 `FINAL` 或视图。
 
 ### 14. 现货 WebSocket 交易
 
