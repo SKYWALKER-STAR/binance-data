@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("binance_toolkit.ws")
 
 # U本位合约 WebSocket 基础地址
-FAPI_WS_BASE_URL = "wss://fstream.binance.com/market/ws"
+#FAPI_WS_BASE_URL = "wss://fstream.binance.com/market/ws"
 
 # 批量写入配置
 DEFAULT_BATCH_SIZE = 500  # 达到此数量立即写入 (U本位合约多，需要更大批量)
@@ -96,12 +96,12 @@ class UsdtMarkPriceStream:
         if not self._symbols:
             # 订阅全部合约
             stream = "!markPrice@arr" if self._update_speed == "3s" else "!markPrice@arr@1s"
-            return f"{self._ws_base_url}/{stream}"
+            return f"{self._ws_base_url}/ws/{stream}"
         else:
             # 订阅指定合约
             suffix = "" if self._update_speed == "3s" else "@1s"
             streams = [f"{s.lower()}@markPrice{suffix}" for s in self._symbols]
-            return f"{self._ws_base_url}/{'/'.join(streams)}"
+            return f"{self._ws_base_url}/ws/{'/'.join(streams)}"
 
     def _is_perpetual(self, symbol: str) -> bool:
         """判断是否为永续合约 (U本位永续合约不含下划线，交割合约如 BTCUSDT_230630)."""
@@ -495,7 +495,7 @@ class UsdtMarkPriceStreamWriter:
             update_speed=self._update_speed,
             on_message=self._on_message,
             perp_only=self._perp_only,
-            ws_base_url=self._config.fapi_ws_base_url,
+            ws_base_url=self._config.fapi_ws_market_base_url,
         )
 
         try:

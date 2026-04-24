@@ -52,7 +52,7 @@ logger = logging.getLogger("binance_toolkit.ws.kline")
 
 # U本位合约 WebSocket 基础地址
 #FAPI_WS_BASE_URL = "wss://fstream.binance.com/market"
-FAPI_WS_BASE_URL = "wss://testnet.binancefuture.com/ws-dapi/v1"
+#FAPI_WS_BASE_URL = "wss://testnet.binancefuture.com/ws-dapi/v1"
 
 # 批量写入配置
 DEFAULT_BATCH_SIZE = 200
@@ -425,7 +425,7 @@ class UsdtKlineStreamWriter:
             interval=self._interval,
             on_message=self._on_message,
             closed_only=self._closed_only,
-            ws_base_url=self._config.fapi_ws_base_url,
+            ws_base_url=self._config.fapi_ws_market_base_url,
         )
 
         try:
