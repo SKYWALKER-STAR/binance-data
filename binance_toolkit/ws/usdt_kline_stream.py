@@ -4,7 +4,7 @@
   - Individual Symbol Kline/Candlestick Streams:
     https://developers.binance.com/docs/derivatives/usds-margined-futures/websocket-market-streams/Kline-Candlestick-Streams
 
-WebSocket Base URL: wss://fstream.binance.com
+WebSocket Base URL: wss://fstream.binance.com/market
 
 Stream 格式:
   - 单个合约: <symbol>@kline_<interval>   (单流)
@@ -51,7 +51,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("binance_toolkit.ws.kline")
 
 # U本位合约 WebSocket 基础地址
-FAPI_WS_BASE_URL = "wss://fstream.binance.com"
+FAPI_WS_BASE_URL = "wss://fstream.binance.com/market"
 
 # 批量写入配置
 DEFAULT_BATCH_SIZE = 200

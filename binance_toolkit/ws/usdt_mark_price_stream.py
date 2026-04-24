@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("binance_toolkit.ws")
 
 # U本位合约 WebSocket 基础地址
-FAPI_WS_BASE_URL = "wss://fstream.binance.com/ws"
+FAPI_WS_BASE_URL = "wss://fstream.binance.com/market/ws"
 
 # 批量写入配置
 DEFAULT_BATCH_SIZE = 500  # 达到此数量立即写入 (U本位合约多，需要更大批量)
