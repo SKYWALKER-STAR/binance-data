@@ -2,7 +2,8 @@
   "api_key": "YOUR_API_KEY_HERE",
   "base_url": "https://api.binance.com",
   "dapi_base_url": "https://dapi.binance.com",
-  "fapi_ws_url": "wss://fstream.binance.com/ws",
+  "fapi_ws_url": "wss://fstream.binance.com/ws", #仓位查询的URL使用该配置项
+  "fapi_ws_base_url": "wss://fstream.binance.com", #U本位合约K线/标记价格市场流基础地址
   "spot_ws_url": "wss://ws-api.binance.com:443/ws-api/v3",
   "private_key_path": null,
   "private_key_password": null,
