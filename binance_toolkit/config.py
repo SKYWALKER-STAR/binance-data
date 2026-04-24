@@ -16,7 +16,7 @@ _DEFAULT_BASE_URL = "https://api.binance.com"
 _DEFAULT_DAPI_BASE_URL = "https://dapi.binance.com"
 _DEFAULT_FAPI_BASE_URL = "https://fapi.binance.com"
 _DEFAULT_FAPI_WS_URL = "wss://fstream.binance.com/ws"
-_DEFAULT_FAPI_WS_BASE_URL = "wss://fstream.binance.com"  # U本位合约 K线市场流基础地址
+_DEFAULT_FAPI_WS_MARKET_BASE_URL = "wss://fstream.binance.com"  # U本位合约 K线市场流基础地址
 _DEFAULT_SPOT_WS_URL = "wss://ws-api.binance.com:443/ws-api/v3"
 _CONFIG_FILE_NAME = "config.json"
 
@@ -30,7 +30,7 @@ class BinanceConfig:
     dapi_base_url: str = _DEFAULT_DAPI_BASE_URL
     fapi_base_url: str = _DEFAULT_FAPI_BASE_URL
     fapi_ws_url: str = _DEFAULT_FAPI_WS_URL  # U本位合约 WebSocket 地址
-    fapi_ws_base_url: str = _DEFAULT_FAPI_WS_BASE_URL  # U本位合约 K线市场流基础地址
+    fapi_ws_market_base_url: str = _DEFAULT_FAPI_WS_MARKET_BASE_URL  # U本位合约 K线市场流基础地址
     spot_ws_url: str = _DEFAULT_SPOT_WS_URL  # 现货 WebSocket API 地址
     private_key_path: Optional[str] = None
     private_key_password: Optional[str] = None
@@ -134,7 +134,7 @@ class BinanceConfig:
             dapi_base_url=os.environ.get("BINANCE_DAPI_BASE_URL", _DEFAULT_DAPI_BASE_URL),
             fapi_base_url=os.environ.get("BINANCE_FAPI_BASE_URL", _DEFAULT_FAPI_BASE_URL),
             fapi_ws_url=os.environ.get("BINANCE_FAPI_WS_URL", _DEFAULT_FAPI_WS_URL),
-            fapi_ws_base_url=os.environ.get("BINANCE_FAPI_WS_BASE_URL", _DEFAULT_FAPI_WS_BASE_URL),
+            fapi_ws_market_base_url=os.environ.get("BINANCE_FAPI_WS_MARKET_BASE_URL", _DEFAULT_FAPI_WS_MARKET_BASE_URL),
             spot_ws_url=os.environ.get("BINANCE_SPOT_WS_URL", _DEFAULT_SPOT_WS_URL),
             private_key_path=os.environ.get("BINANCE_PRIVATE_KEY"),
             private_key_password=os.environ.get("BINANCE_PRIVATE_KEY_PW"),
@@ -195,7 +195,7 @@ class BinanceConfig:
             dapi_base_url=data.get("dapi_base_url", _DEFAULT_DAPI_BASE_URL),
             fapi_base_url=data.get("fapi_base_url", _DEFAULT_FAPI_BASE_URL),
             fapi_ws_url=data.get("fapi_ws_url", _DEFAULT_FAPI_WS_URL),
-            fapi_ws_base_url=data.get("fapi_ws_base_url", _DEFAULT_FAPI_WS_BASE_URL),
+            fapi_ws_market_base_url=data.get("fapi_ws_market_base_url", _DEFAULT_FAPI_WS_MARKET_BASE_URL),
             spot_ws_url=data.get("spot_ws_url", _DEFAULT_SPOT_WS_URL),
             private_key_path=data.get("private_key_path"),
             private_key_password=data.get("private_key_password"),
