@@ -466,17 +466,25 @@ def _cmd_fetch_oi(tk: BinanceToolkit, args: argparse.Namespace) -> None:
 
 def _cmd_engine_futures(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     """启动策略引擎（ClickHouse Pull -> U本位交易动作）."""
+    import dataclasses
     from .engine import FuturesStrategyEngine
 
-    engine = FuturesStrategyEngine(tk._client.config, dry_run=args.dry_run)
+    config = tk._client.config
+    if args.port is not None:
+        config = dataclasses.replace(config, engine_health_port=args.port)
+    engine = FuturesStrategyEngine(config, dry_run=args.dry_run)
     engine.run()
 
 
 def _cmd_engine_spot(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     """启动现货策略引擎（ClickHouse Pull -> 现货交易动作）."""
+    import dataclasses
     from .engine import SpotStrategyEngine
 
-    engine = SpotStrategyEngine(tk._client.config, dry_run=args.dry_run)
+    config = tk._client.config
+    if args.port is not None:
+        config = dataclasses.replace(config, engine_health_port=args.port)
+    engine = SpotStrategyEngine(config, dry_run=args.dry_run)
     engine.run()
 
 
@@ -902,6 +910,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true",
         help="演练模式: 不真实下单/撤单, 仅走引擎状态流转",
     )
+    p.add_argument(
+        "--port", type=int, default=None, metavar="PORT",
+        help="健康检查监听端口 (覆盖 config.json 中的 engine_health_port)",
+    )
 
     # engine-spot (现货策略引擎)
     p = sub.add_parser(
@@ -911,6 +923,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--dry-run", action="store_true",
         help="演练模式: 不真实下单/撤单, 仅走引擎状态流转",
+    )
+    p.add_argument(
+        "--port", type=int, default=None, metavar="PORT",
+        help="健康检查监听端口 (覆盖 config.json 中的 engine_health_port)",
     )
 
     # spot-pnl (现货未实现盈亏)
