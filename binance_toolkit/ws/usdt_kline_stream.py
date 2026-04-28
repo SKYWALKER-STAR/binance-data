@@ -4,7 +4,7 @@
   - Individual Symbol Kline/Candlestick Streams:
     https://developers.binance.com/docs/derivatives/usds-margined-futures/websocket-market-streams/Kline-Candlestick-Streams
 
-WebSocket Base URL: wss://fstream.binance.com
+WebSocket Base URL: wss://fstream.binance.com/market
 
 Stream 格式:
   - 单个合约: <symbol>@kline_<interval>   (单流)
@@ -51,7 +51,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger("binance_toolkit.ws.kline")
 
 # U本位合约 WebSocket 基础地址
-FAPI_WS_BASE_URL = "wss://fstream.binance.com"
+#FAPI_WS_BASE_URL = "wss://fstream.binance.com/market"
+#FAPI_WS_BASE_URL = "wss://testnet.binancefuture.com/ws-dapi/v1"
 
 # 批量写入配置
 DEFAULT_BATCH_SIZE = 200
@@ -82,6 +83,7 @@ class UsdtKlineStream:
         interval: str = DEFAULT_INTERVAL,
         on_message: Callable[[dict], None] | None = None,
         closed_only: bool = False,
+        ws_base_url: str | None = None,
     ):
         """
         Args:
@@ -89,6 +91,7 @@ class UsdtKlineStream:
             interval:     K 线间隔，如 "1d" / "1h" / "15m" 等。
             on_message:   收到消息时的回调函数，参数为已解析的 K线数据 dict。
             closed_only:  True 时仅回调已收盘的 K 线（k.x == true），默认 False。
+            ws_base_url:  WebSocket 基础地址，None 时使用模块级 FAPI_WS_BASE_URL。
         """
         if not symbols:
             raise ValueError("symbols 不能为空，请至少指定一个合约")
@@ -96,6 +99,7 @@ class UsdtKlineStream:
         self._interval = interval
         self._on_message = on_message
         self._closed_only = closed_only
+        self._ws_base_url = ws_base_url or FAPI_WS_BASE_URL
         self._stop_event = threading.Event()
         self._ws: websocket.WebSocketApp | None = None
 
@@ -104,10 +108,10 @@ class UsdtKlineStream:
         streams = [f"{s.lower()}@kline_{self._interval}" for s in self._symbols]
         if len(streams) == 1:
             # 单流模式：消息直接是 kline event
-            return f"{FAPI_WS_BASE_URL}/ws/{streams[0]}"
+            return f"{self._ws_base_url}/ws/{streams[0]}"
         else:
             # 合并流模式：消息包含 {"stream": "...", "data": {...}}
-            return f"{FAPI_WS_BASE_URL}/stream?streams={'/'.join(streams)}"
+            return f"{self._ws_base_url}/stream?streams={'/'.join(streams)}"
 
     @property
     def _is_combined(self) -> bool:
@@ -421,6 +425,7 @@ class UsdtKlineStreamWriter:
             interval=self._interval,
             on_message=self._on_message,
             closed_only=self._closed_only,
+            ws_base_url=self._config.fapi_ws_market_base_url,
         )
 
         try:

@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("binance_toolkit.ws")
 
 # U本位合约 WebSocket 基础地址
-FAPI_WS_BASE_URL = "wss://fstream.binance.com/ws"
+#FAPI_WS_BASE_URL = "wss://fstream.binance.com/market/ws"
 
 # 批量写入配置
 DEFAULT_BATCH_SIZE = 500  # 达到此数量立即写入 (U本位合约多，需要更大批量)
@@ -72,6 +72,7 @@ class UsdtMarkPriceStream:
         update_speed: str = "1s",
         on_message: Callable[[dict | list[dict]], None] | None = None,
         perp_only: bool = True,
+        ws_base_url: str | None = None,
     ):
         """
         Args:
@@ -80,11 +81,13 @@ class UsdtMarkPriceStream:
             update_speed: 更新速度，"1s" (每秒) 或 "3s" (每3秒)。
             on_message:   收到消息时的回调函数。
             perp_only:    仅保留永续合约数据 (排除交割合约，如 BTCUSDT_230630)，默认 True。
+            ws_base_url:  WebSocket 基础地址，None 时使用模块级 FAPI_WS_BASE_URL。
         """
         self._symbols = symbols or []
         self._update_speed = update_speed
         self._on_message = on_message
         self._perp_only = perp_only
+        self._ws_base_url = ws_base_url or FAPI_WS_BASE_URL
         self._stop_event = threading.Event()
         self._ws: websocket.WebSocketApp | None = None
 
@@ -93,12 +96,12 @@ class UsdtMarkPriceStream:
         if not self._symbols:
             # 订阅全部合约
             stream = "!markPrice@arr" if self._update_speed == "3s" else "!markPrice@arr@1s"
-            return f"{FAPI_WS_BASE_URL}/{stream}"
+            return f"{self._ws_base_url}/ws/{stream}"
         else:
             # 订阅指定合约
             suffix = "" if self._update_speed == "3s" else "@1s"
             streams = [f"{s.lower()}@markPrice{suffix}" for s in self._symbols]
-            return f"{FAPI_WS_BASE_URL}/{'/'.join(streams)}"
+            return f"{self._ws_base_url}/ws/{'/'.join(streams)}"
 
     def _is_perpetual(self, symbol: str) -> bool:
         """判断是否为永续合约 (U本位永续合约不含下划线，交割合约如 BTCUSDT_230630)."""
@@ -492,6 +495,7 @@ class UsdtMarkPriceStreamWriter:
             update_speed=self._update_speed,
             on_message=self._on_message,
             perp_only=self._perp_only,
+            ws_base_url=self._config.fapi_ws_market_base_url,
         )
 
         try:

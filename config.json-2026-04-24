@@ -1,19 +1,17 @@
 {
-  "api_key": "YOUR_API_KEY_HERE",
-  "base_url": "https://api.binance.com",
-  "dapi_base_url": "https://dapi.binance.com",
-  "fapi_ws_url": "wss://fstream.binance.com/ws", #仓位查询的URL使用该配置项
-  "fapi_ws_market_base_url": "wss://fstream.binance.com", #U本位合约K线/标记价格市场流基础地址
-  "spot_ws_url": "wss://ws-api.binance.com:443/ws-api/v3",
+  "api_key": "EwYEYbSdvVSddBKi5zz4LuDhd9sOcV5m1gTUJ3gr2BQPiW19I1FcVkyqMIEyXkrd",
+  "secret_key": "LCNbo5WGHQby0M1qT4XgbGqbmxeHIPdvMFxIfWFF4z39eM0wsKVxegtvrXEV80Ru",
+  "base_url": "https://demo-fapi.binance.com",
+  "fapi_ws_url": "wss://testnet.binancefuture.com/ws-fapi/v1",
+  "spot_ws_url": "wss://demo-ws-api.binance.com/ws-api/v3",
   "private_key_path": null,
-  "private_key_password": null,
-  "secret_key": null,
-  "recv_window": 5000,
-  "timeout": 10,
-  "influx_host": "http://192.168.1.4:8181",
-  "influx_database": "fianndata",
+  "private_key_password":  null,
+  "influx_host": "http://192.168.1.6:8181",
+  "influx_database": "finndata",
   "influx_measurement": "binance_ticker",
   "influx_futures_measurement": "binance_futures",
+  "recv_window": 5000,
+  "timeout": 10,
   "kafka_bootstrap_servers": "localhost:9092",
   "kafka_topic_coin": "binance.mark_price.coin",
   "kafka_topic_usdt": "binance.mark_price.usdt",
@@ -21,7 +19,7 @@
   "kafka_topic_spot_trade": "binance.trade.spot",
   "kafka_topic_engine_events": "binance.engine.futures",
   "clickhouse_signal_url": "http://127.0.0.1:8123",
-  "clickhouse_database": "default",
+  "clickhouse_database": "binance",
   "clickhouse_user": "default",
   "clickhouse_password": "",
   "clickhouse_signal_table": "strategy_signals",
@@ -39,5 +37,5 @@
   "engine_max_actions_per_min_symbol": 120,
   "engine_health_host": "127.0.0.1",
   "engine_health_port": 8088,
-  "log_level": "INFO"
+  "log_level": "DEBUG"
 }

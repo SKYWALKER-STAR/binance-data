@@ -20,6 +20,21 @@ def _to_int(value: Any, default: int = 0) -> int:
     return int(value)
 
 
+def _to_int_or_none(value: Any) -> int | None:
+    """将值转换为 int，无法转换时（如 UUID 字符串）返回 None."""
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        return int(s)
+    except (ValueError, TypeError):
+        return None
+
+
 def _to_str(value: Any, default: str = "") -> str:
     if value is None:
         return default
@@ -91,7 +106,7 @@ class TradingSignal:
             position_side=_to_str(row.get("position_side")).upper() or None,
             reduce_only=_to_str(row.get("reduce_only")).lower() or None,
             close_position=_to_str(row.get("close_position")).lower() or None,
-            order_id=_to_int(row.get("order_id"), 0) or None,
+            order_id=_to_int_or_none(row.get("order_id")),
             orig_client_order_id=_to_str(row.get("orig_client_order_id")) or None,
         )
 
