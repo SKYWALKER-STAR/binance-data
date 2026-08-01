@@ -2313,8 +2313,8 @@ python -m binance_toolkit engine-spot --dry-run    # 演练模式
 ```sql
 CREATE TABLE strategy_signals
 (
-        signal_id String,
-        strategy_id String,
+        signal_id UUID DEFAULT generateUUIDv4(),
+        strategy_id String DEFAULT 'Demo',
         market LowCardinality(String) DEFAULT 'futures',  -- 'spot' / 'futures'
         symbol String,
         action LowCardinality(String),
@@ -2331,8 +2331,8 @@ CREATE TABLE strategy_signals
         reduce_only Nullable(String),
         close_position Nullable(String),
 
-        order_id Nullable(Int64),
-        orig_client_order_id Nullable(String)
+        order_id UUID DEFAULT generateUUIDv4(),
+        orig_client_order_id UUID DEFAULT generateUUIDv4()
 )
 ENGINE = MergeTree
 ORDER BY (signal_ts_ms, market, strategy_id, signal_id);
