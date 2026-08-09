@@ -310,6 +310,19 @@ def _cmd_futures_positions(tk: BinanceToolkit, args: argparse.Namespace) -> None
             ch_storage.close()
 
 
+def _cmd_futures_positions_sync_redis(tk: BinanceToolkit, args: argparse.Namespace) -> None:
+    """持续通过 WS API 拉取仓位并同步到 Redis."""
+    from .collector.futures_position_redis_collector import FuturesPositionRedisCollector
+
+    collector = FuturesPositionRedisCollector(
+        tk._client.config,
+        symbol=args.symbol,
+        interval_sec=args.interval,
+        enable_print=not args.quiet,
+    )
+    collector.run()
+
+
 def _cmd_ws_kline_usdt(tk: BinanceToolkit, args: argparse.Namespace) -> None:
     """启动 U 本位合约日 K 线 WebSocket 流."""
     from .ws.usdt_kline_stream import run_usdt_kline_stream
@@ -1018,6 +1031,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="以 JSON 格式打印原始响应（调试用）",
     )
 
+    # futures-positions-sync-redis (仓位同步到 Redis)
+    p = sub.add_parser(
+        "futures-positions-sync-redis",
+        help="通过 WebSocket API 持续获取 U 本位仓位并维护到 Redis",
+    )
+    p.add_argument(
+        "--symbol", default=None,
+        help="指定合约交易对, 如 BTCUSDT。省略则同步全部活跃仓位",
+    )
+    p.add_argument(
+        "--interval", type=float, default=None,
+        help="同步间隔秒数。省略则使用配置 redis_position_sync_interval_sec",
+    )
+    p.add_argument(
+        "--quiet", "-q", action="store_true",
+        help="静默模式, 不打印每次同步摘要",
+    )
+
     return parser
 
 
@@ -1046,6 +1077,7 @@ _COMMAND_MAP = {
     "fetch-klines": _cmd_fetch_klines,
     "fetch-oi": _cmd_fetch_oi,
     "futures-positions": _cmd_futures_positions,
+    "futures-positions-sync-redis": _cmd_futures_positions_sync_redis,
     "engine-futures": _cmd_engine_futures,
     "engine-spot": _cmd_engine_spot,
 }

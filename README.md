@@ -79,6 +79,32 @@ python -m binance_toolkit ping
 # 获取最新价格
 python -m binance_toolkit price --symbol BTCUSDT
 
+### 持仓维护（WebSocket -> Redis）
+
+1. 安装 Redis 依赖：
+
+```bash
+pip install 'binance-toolkit[redis]'
+```
+
+2. 在配置中设置：
+
+- `redis_url`，例如 `redis://127.0.0.1:6379/0`
+- `redis_position_key_prefix`，例如 `binance:position:usdt_futures`
+- `redis_position_sync_interval_sec`，例如 `2.0`
+
+3. 启动仓位同步：
+
+```bash
+python -m binance_toolkit futures-positions-sync-redis --interval 2
+```
+
+可选只同步单个合约：
+
+```bash
+python -m binance_toolkit futures-positions-sync-redis --symbol BTCUSDT
+```
+
 # 获取 K 线数据
 python -m binance_toolkit klines --symbol ETHUSDT --interval 1h --limit 10
 

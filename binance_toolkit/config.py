@@ -54,6 +54,11 @@ class BinanceConfig:
     kafka_topic_kline_usdt: str = "binance.kline.usdt_futures"    # U本位合约 K线 Topic
     kafka_topic_oi_usdt: str = "binance.oi.usdt_futures"          # U本位合约 OI 统计 Topic
 
+    # Redis (可选, 用于实时状态维护)
+    redis_url: Optional[str] = None
+    redis_position_key_prefix: str = "binance:position:usdt_futures"
+    redis_position_sync_interval_sec: float = 2.0
+
     # ClickHouse signal source (策略引擎 Pull)
     clickhouse_signal_url: Optional[str] = None
     clickhouse_database: str = "default"
@@ -105,6 +110,9 @@ class BinanceConfig:
             KAFKA_TOPIC_FUTURES_TRADE (可选, U本位合约交易结果 Topic, 默认 binance.trade.usdt_futures)
             KAFKA_TOPIC_SPOT_TRADE    (可选, 现货交易结果 Topic, 默认 binance.trade.spot)
             KAFKA_TOPIC_ENGINE_EVENTS (可选, 策略引擎审计 Topic, 默认 binance.engine.futures)
+            REDIS_URL                  (可选, 如 redis://127.0.0.1:6379/0)
+            REDIS_POSITION_KEY_PREFIX  (可选, 默认 binance:position:usdt_futures)
+            REDIS_POSITION_SYNC_INTERVAL_SEC (可选, 默认 2.0)
             CLICKHOUSE_SIGNAL_URL      (可选, ClickHouse HTTP 地址)
             CLICKHOUSE_DATABASE        (可选, 默认 default)
             CLICKHOUSE_USER            (可选)
@@ -153,6 +161,13 @@ class BinanceConfig:
             kafka_topic_engine_events=os.environ.get("KAFKA_TOPIC_ENGINE_EVENTS", "binance.engine.futures"),
             kafka_topic_kline_usdt=os.environ.get("KAFKA_TOPIC_KLINE_USDT", "binance.kline.usdt_futures"),
             kafka_topic_oi_usdt=os.environ.get("KAFKA_TOPIC_OI_USDT", "binance.oi.usdt_futures"),
+            redis_url=os.environ.get("REDIS_URL"),
+            redis_position_key_prefix=os.environ.get(
+                "REDIS_POSITION_KEY_PREFIX", "binance:position:usdt_futures"
+            ),
+            redis_position_sync_interval_sec=float(
+                os.environ.get("REDIS_POSITION_SYNC_INTERVAL_SEC", "2.0")
+            ),
             clickhouse_signal_url=os.environ.get("CLICKHOUSE_SIGNAL_URL"),
             clickhouse_database=os.environ.get("CLICKHOUSE_DATABASE", "default"),
             clickhouse_user=os.environ.get("CLICKHOUSE_USER"),
@@ -214,6 +229,11 @@ class BinanceConfig:
             kafka_topic_engine_events=data.get("kafka_topic_engine_events", "binance.engine.futures"),
             kafka_topic_kline_usdt=data.get("kafka_topic_kline_usdt", "binance.kline.usdt_futures"),
             kafka_topic_oi_usdt=data.get("kafka_topic_oi_usdt", "binance.oi.usdt_futures"),
+            redis_url=data.get("redis_url"),
+            redis_position_key_prefix=data.get(
+                "redis_position_key_prefix", "binance:position:usdt_futures"
+            ),
+            redis_position_sync_interval_sec=float(data.get("redis_position_sync_interval_sec", 2.0)),
             clickhouse_signal_url=data.get("clickhouse_signal_url"),
             clickhouse_database=data.get("clickhouse_database", "default"),
             clickhouse_user=data.get("clickhouse_user"),

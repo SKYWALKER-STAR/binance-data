@@ -28,6 +28,9 @@ influxdb = [
 kafka = [
     "kafka-python>=2.0",
 ]
+redis = [
+    "redis>=8.0",
+]
 
 [project.scripts]
 binance-toolkit = "binance_toolkit.cli:main"

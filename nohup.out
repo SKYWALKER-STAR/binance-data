@@ -1,58 +1,8 @@
-nohup: ignoring input
-2026-04-04 13:42:51 [INFO] binance_toolkit.collector: 标记价格采集器启动: 获取所有永续合约, interval=60s
-2026-04-04 13:43:36 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 13:45:21 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 13:47:06 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 13:48:54 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 13:50:39 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 13:52:24 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 13:54:09 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 13:55:54 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 13:57:39 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 13:59:24 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:01:09 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:02:54 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:04:39 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:06:27 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:08:19 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:10:04 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:11:49 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:13:34 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:15:19 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:17:05 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:18:50 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:20:35 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:22:20 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:24:07 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:25:52 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:27:38 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:29:23 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:31:09 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:32:54 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:34:39 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:36:24 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:38:09 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:39:54 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:41:39 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:43:24 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:45:09 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:46:54 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:48:39 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:50:24 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:52:09 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:53:54 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:55:39 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:57:24 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 14:59:09 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 15:00:54 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 15:02:40 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 15:04:26 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 15:06:11 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 15:07:56 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 15:09:41 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 15:11:26 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 15:13:11 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 15:14:56 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 15:16:41 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 15:18:26 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
-2026-04-04 15:20:11 [INFO] binance_toolkit.collector: ✓ 采集完成, 共 45 个永续合约
+usage: binance-toolkit ws-mark-price-usdt [-h] [--symbols SYMBOLS]
+                                          [--speed {1s,3s}] [--all]
+                                          [--write-db] [--write-kafka]
+                                          [--quiet] [--batch-size BATCH_SIZE]
+                                          [--flush-interval FLUSH_INTERVAL]
+                                          [--writer-threads WRITER_THREADS]
+                                          [--sample-interval SAMPLE_INTERVAL]
+binance-toolkit ws-mark-price-usdt: error: argument --sample-interval: invalid int value: '60s'
