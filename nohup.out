@@ -1,8 +1,0 @@
-usage: binance-toolkit ws-mark-price-usdt [-h] [--symbols SYMBOLS]
-                                          [--speed {1s,3s}] [--all]
-                                          [--write-db] [--write-kafka]
-                                          [--quiet] [--batch-size BATCH_SIZE]
-                                          [--flush-interval FLUSH_INTERVAL]
-                                          [--writer-threads WRITER_THREADS]
-                                          [--sample-interval SAMPLE_INTERVAL]
-binance-toolkit ws-mark-price-usdt: error: argument --sample-interval: invalid int value: '60s'
