@@ -637,6 +637,7 @@ class FuturesTradeWsClient:
 
         try:
             with self._lock:
+                logger.info("message to send: %s", message)
                 self._ws.send(message)  # type: ignore[union-attr]
             logger.debug("已发送 %s 请求 id=%s", method, req_id)
 
