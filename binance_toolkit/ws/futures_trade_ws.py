@@ -37,7 +37,7 @@ from ..auth import create_signer
 from ..exceptions import BinanceAPIError, BinanceAuthError
 
 if TYPE_CHECKING:
-    from ..auth import BaseSigner
+    from ..auth import BaseSigner, HMACSigner
     from ..config import BinanceConfig
     from ..storage.kafka import KafkaStorage
 
@@ -109,6 +109,18 @@ class FuturesTradeWsClient:
         self._signer: Optional["BaseSigner"] = create_signer(config)
         if self._signer is None:
             raise BinanceAuthError("FuturesTradeWsClient 需要签名配置 (secret_key 或 private_key_path)")
+
+        # USD-M Futures WS 交易接口要求 HMAC-SHA256 secretKey 签名。
+        # 若同时配置了 private_key 与 secret_key，create_signer 会优先选择 Ed25519，
+        # 这会导致 futures trade WS 接口报 signature 无效。
+        if config.secret_key:
+            from ..auth import HMACSigner
+
+            self._signer = HMACSigner(config.secret_key)
+        elif type(self._signer).__name__ != "HMACSigner":
+            raise BinanceAuthError(
+                "FuturesTradeWsClient 需要 BINANCE_SECRET_KEY (HMAC) 才能调用签名 WS 接口"
+            )
 
         self._ws: Optional[websocket.WebSocket] = None
         self._lock = threading.Lock()                     # 保护 ws 写操作

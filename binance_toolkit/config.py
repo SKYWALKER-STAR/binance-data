@@ -15,7 +15,7 @@ from typing import Optional
 _DEFAULT_BASE_URL = "https://api.binance.com"
 _DEFAULT_DAPI_BASE_URL = "https://dapi.binance.com"
 _DEFAULT_FAPI_BASE_URL = "https://fapi.binance.com"
-_DEFAULT_FAPI_WS_URL = "wss://fstream.binance.com/ws"
+_DEFAULT_FAPI_WS_URL = "wss://ws-fapi.binance.com/ws-fapi/v1"
 _DEFAULT_FAPI_WS_MARKET_BASE_URL = "wss://fstream.binance.com"  # U本位合约 K线市场流基础地址
 _DEFAULT_SPOT_WS_URL = "wss://ws-api.binance.com:443/ws-api/v3"
 _CONFIG_FILE_NAME = "config.json"
@@ -93,7 +93,7 @@ class BinanceConfig:
             BINANCE_API_KEY        (必须)
             BINANCE_BASE_URL       (可选, 默认 https://api.binance.com)
             BINANCE_DAPI_BASE_URL  (可选, 默认 https://dapi.binance.com)
-            BINANCE_FAPI_WS_URL    (可选, 默认 wss://fstream.binance.com/ws)
+            BINANCE_FAPI_WS_URL    (可选, 默认 wss://ws-fapi.binance.com/ws-fapi/v1)
             BINANCE_SPOT_WS_URL    (可选, 默认 wss://ws-api.binance.com:443/ws-api/v3)
             BINANCE_PRIVATE_KEY    (可选, Ed25519 私钥路径)
             BINANCE_PRIVATE_KEY_PW (可选, 私钥密码)
