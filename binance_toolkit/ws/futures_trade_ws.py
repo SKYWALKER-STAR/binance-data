@@ -344,6 +344,7 @@ class FuturesTradeWsClient:
         params: dict[str, Any] = {}
         _maybe(params, "symbol", symbol)
         params.update(kwargs)
+        logger.info("Parameters for query_position: %s", params)
         return self._request_position("v2/account.position", params)
 
     # ------------------------------------------------------------------
