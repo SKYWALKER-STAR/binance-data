@@ -19,10 +19,10 @@ logger = logging.getLogger("binance_toolkit.storage.redis")
 class RedisPositionStore:
     """Persist futures position snapshots into Redis.
 
-    Key layout (prefix=binance:position:usdt_futures):
-      - {prefix}:snapshot                hash[field=symbol:side, value=json]
-      - {prefix}:symbols                 set of symbol:side keys
-      - {prefix}:meta                    hash with last_sync_ts, position_count
+        Key layout (prefix=binance:position:usdt_futures):
+            - {prefix}:raw:snapshot:all:v1        hash[field=symbol:side, value=json]
+            - {prefix}:raw:index:positions:v1     set of symbol:side keys
+            - {prefix}:raw:meta:v1                hash with last_sync_ts, position_count
     """
 
     def __init__(self, config: "BinanceConfig") -> None:
@@ -37,9 +37,9 @@ class RedisPositionStore:
             ) from exc
 
         self._prefix = config.redis_position_key_prefix
-        self._snapshot_key = f"{self._prefix}:snapshot"
-        self._symbols_key = f"{self._prefix}:symbols"
-        self._meta_key = f"{self._prefix}:meta"
+        self._snapshot_key = f"{self._prefix}:raw:snapshot:all:v1"
+        self._symbols_key = f"{self._prefix}:raw:index:positions:v1"
+        self._meta_key = f"{self._prefix}:raw:meta:v1"
         self._redis = redis.Redis.from_url(config.redis_url, decode_responses=True)
         self._redis.ping()
         logger.info("RedisPositionStore 已连接: %s", config.redis_url)
@@ -96,6 +96,7 @@ class RedisPositionStore:
             mapping={
                 "last_sync_ts": synced_at,
                 "position_count": str(len(latest_ids)),
+                "source": "binance_ws_api",
             },
         )
         pipe.execute()

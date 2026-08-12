@@ -105,6 +105,14 @@ python -m binance_toolkit futures-positions-sync-redis --interval 2
 python -m binance_toolkit futures-positions-sync-redis --symbol BTCUSDT
 ```
 
+Redis 键布局（prefix = `redis_position_key_prefix`，默认 `binance:position:usdt_futures`）：
+
+- `{prefix}:raw:snapshot:all:v1`：`HASH`，field=`symbol:side`，value=仓位 JSON
+- `{prefix}:raw:index:positions:v1`：`SET`，成员=`symbol:side`
+- `{prefix}:raw:meta:v1`：`HASH`，字段包括 `last_sync_ts`、`position_count`、`source`
+
+说明：该采集器仅维护 raw 层键，领域层 view 键由 trading-engine 的 projector 维护。
+
 # 获取 K 线数据
 python -m binance_toolkit klines --symbol ETHUSDT --interval 1h --limit 10
 
